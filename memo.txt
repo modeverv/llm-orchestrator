@@ -1,0 +1,32 @@
+
+オートパイロットで作業できるところまで作業してください。
+  まず AGENTS.md と PLAN.md を読んでください。
+  この repo は Phase 1〜6 のMVP実装済みですが、実運用品質の未成熟ポイントが
+  PLAN.md の「MVP後の未成熟ポイント」と AGENTS.md の「Codexアプリへの引き継ぎ」
+  に整理されています。
+
+  そこに書かれている順番で進めてください。
+  最初は P0 の実環境E2E からお願いします。
+
+  まず以下を実行して現状確認:
+  - git status --short
+  - python -m pytest -q
+  - python -m py_compile cli.py discord_bot.py fyws/*.py fyws/workers/*.py
+  - python discord_bot.py --help
+  - python cli.py --help
+
+  その後、可能なら以下を進めてください:
+  1. discord.py を使った `python discord_bot.py --serve --run-jobs` の実接続検証
+  2. DISCORD_TOKEN / FYWS_DISCORD_CHANNEL_ID を使ったメッセージ往復確認
+  3. Gemini CLI / Claude CLI の実worker E2E
+  4. 実projectを2つ以上作って並列dispatch確認
+  5. 結果を PLAN.md のチェックリストに反映
+
+  判断が必要なら勝手に進めず human_gate 相当として止まってください。
+  実装したらテストを通して、意味のある単位で git commit してください。
+
+  短く言うなら:
+
+  /Users/seijiro/Sync/sync_work/llm-orchestrator の AGENTS.md と PLAN.md を読ん
+  で、PLAN.md の「MVP後の未成熟ポイント」を P0 から順に進めて。まず実Discord接続
+  E2Eと実worker E2E。テストしてコミットまで。
