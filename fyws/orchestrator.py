@@ -6,7 +6,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import evaluator, gate, lock, summarizer
+from . import evaluator, gate, lock, summarizer, verifier
 from .db import DEFAULT_DB_PATH, connect, init_db
 from .workers.base import WorkerBase, WorkerResult
 from .workers.claude import ClaudeWorker
@@ -152,6 +152,29 @@ def run_job(
                 )
                 _event(conn, job_id, "error", "out-of-scope changes detected", {"files": out_of_scope})
             return result
+
+        if result.success:
+            acceptance_path = _find_acceptance_path(job)
+            if acceptance_path:
+                verify_ok, verify_outputs = verifier.run_verify(acceptance_path, job["cwd"])
+                if not verify_ok:
+                    with connect(db_path) as conn:
+                        gate.open_gate(
+                            conn,
+                            job_id,
+                            "Verification commands failed.\n" + "\n---\n".join(verify_outputs[-2:]),
+                            "verify_failed",
+                        )
+                        _event(conn, job_id, "error", "verification failed", {"outputs": verify_outputs})
+                    return WorkerResult(
+                        False,
+                        result.last_message,
+                        result.events_path,
+                        tokens_in=result.tokens_in,
+                        tokens_out=result.tokens_out,
+                        step_count=result.step_count,
+                        error="verification failed",
+                    )
 
         status = "succeeded" if result.success else "failed"
         if not result.success and _should_gate_after_failure(db_path, job_id):
@@ -352,6 +375,53 @@ def _previous_summary_path(job, db_path: str | Path) -> Path | None:
         return None
     path = ARTIFACTS_DIR / str(previous["id"]) / "summary.md"
     return path if path.exists() else None
+
+
+def recover_stuck_jobs(db_path: str | Path = DEFAULT_DB_PATH) -> list[int]:
+    """Reset jobs stuck in 'running' at crash time back to 'queued'."""
+    init_db(db_path)
+    with connect(db_path) as conn:
+        rows = conn.execute("SELECT id FROM jobs WHERE status = 'running'").fetchall()
+        ids = [int(row["id"]) for row in rows]
+        for job_id in ids:
+            conn.execute(
+                "UPDATE jobs SET status = 'queued', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (job_id,),
+            )
+            _event(conn, job_id, "queued", "recovered from stuck running state after restart")
+            lock.release_lock(conn, job_id)
+    return ids
+
+
+def project_list(db_path: str | Path = DEFAULT_DB_PATH) -> list[dict]:
+    init_db(db_path)
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT project,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued,
+                   SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
+                   SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
+                   SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                   SUM(CASE WHEN status = 'waiting_human' THEN 1 ELSE 0 END) AS waiting_human,
+                   MAX(updated_at) AS last_updated
+            FROM jobs
+            GROUP BY project
+            ORDER BY project
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def _find_acceptance_path(job) -> Path | None:
+    task_acceptance = Path(job["prompt_path"]).parent / "task.acceptance.md"
+    if task_acceptance.exists():
+        return task_acceptance
+    project_acceptance = Path(job["cwd"]) / "ACCEPTANCE.md"
+    if project_acceptance.exists():
+        return project_acceptance
+    return None
 
 
 def worker_requires_human(message: str) -> bool:

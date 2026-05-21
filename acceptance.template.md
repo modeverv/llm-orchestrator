@@ -13,6 +13,14 @@
 - [ ] 条件1
 - [ ] 条件2
 
+## Verify Commands
+
+```bash
+# 終了コード0で成功とみなされる検証コマンドを書く
+# 例: python -m pytest -q
+# 例: python -m py_compile path/to/file.py
+```
+
 ## 所有パス（このjobが変更してよいファイル）
 
 ```yaml

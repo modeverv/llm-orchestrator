@@ -50,8 +50,16 @@ def run_forever(
     interval_seconds: float = 5,
     notifier: Notifier | None = None,
 ) -> None:
+    from .orchestrator import recover_stuck_jobs
+
+    recovered = recover_stuck_jobs(db_path)
+    if recovered:
+        print(f"recovered {len(recovered)} stuck jobs: {recovered}", flush=True)
     while True:
-        run_once(db_path, max_workers=max_workers, notifier=notifier)
+        try:
+            run_once(db_path, max_workers=max_workers, notifier=notifier)
+        except Exception as exc:
+            print(f"runner error (continuing): {exc}", flush=True)
         time.sleep(interval_seconds)
 
 

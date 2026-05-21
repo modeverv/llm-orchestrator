@@ -49,6 +49,37 @@ def project_dir(work_root: str | Path, project: str) -> Path:
     return Path(work_root).expanduser().resolve() / project
 
 
+def create_project(project: str, work_root: str | Path = DEFAULT_WORK_ROOT) -> Path:
+    cwd = project_dir(work_root, project)
+    cwd.mkdir(parents=True, exist_ok=True)
+    agents = cwd / "AGENTS.md"
+    if not agents.exists():
+        agents.write_text(_agents_template(project), encoding="utf-8")
+    return cwd
+
+
+def _agents_template(project: str) -> str:
+    return f"""\
+# AGENTS.md — {project}
+
+このファイルはLLM workerがこのプロジェクトで作業するときに必ず読む指示書。
+
+## 必須ルール
+
+1. **commitは絶対にするな** — 変更はworking treeに置いたまま止まれ。commitはhuman_gateを通過してから人間が行う。
+2. **stashは使って良い** — 作業の切り替えや退避に `git stash` を使うことは許可する。
+3. **git履歴は参照して良い** — `git log`, `git diff`, `git show`, `git blame` で過去の実装を確認してよい。ただし `push`, `reset --hard`, `clean -f` などリポジトリを破壊する操作は禁止。
+4. **テストが通らない状態で完了を宣言するな** — acceptance.mdの `## Verify Commands` に書かれたコマンドがすべて exit 0 になるまでは完了ではない。テストが存在しない場合は `python -m pytest -q`（またはプロジェクトの標準テストコマンド）を実行して確認すること。
+
+## 行動規範
+
+- 判断が必要になったらコードを書くな。`人間の判断が必要` と出力して止まれ。
+- 「たぶんこれで良い」という判断を自分でするな。
+- 完了できなくても、現在地を正確に記録して止まることが正解。
+- ownership_paths の範囲外のファイルを変更するな。
+"""
+
+
 def write_task_file(project_path: str | Path, instruction: str) -> Path:
     task_path = Path(project_path) / "task.md"
     task_path.write_text(instruction + "\n", encoding="utf-8")
@@ -85,6 +116,14 @@ def write_acceptance_file(
 - [ ] Worker changed only files inside ownership paths.
 - [ ] Relevant verification commands were run or explicitly documented as not run.
 - [ ] Final state is recorded in summary.md.
+
+## Verify Commands
+
+```bash
+# Add verification commands here — they must exit 0 for the job to succeed.
+# e.g.: python -m pytest -q
+# e.g.: python -m py_compile path/to/file.py
+```
 
 ## Ownership
 
@@ -127,11 +166,15 @@ def queue_from_message(
     o_score: float = 0.8,
     i_score: float = 0.2,
     db_path: str | Path | None = None,
+    create: bool = False,
 ) -> QueuedGatewayJob:
     parsed = parse_project_message(message)
     cwd = project_dir(work_root, parsed.project)
     if not cwd.exists():
-        raise FileNotFoundError(cwd)
+        if create:
+            create_project(parsed.project, work_root)
+        else:
+            raise FileNotFoundError(cwd)
     ownership_paths = discover_ownership_paths(cwd)
     task = write_task_file(cwd, parsed.instruction)
     acceptance = write_acceptance_file(

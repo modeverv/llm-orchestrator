@@ -39,6 +39,39 @@ python -m pytest -q
 python -m py_compile cli.py discord_bot.py fyws/*.py fyws/workers/*.py
 ```
 
+## Discord Commands
+
+Start the bot:
+
+```bash
+env $(cat .env | xargs) python discord_bot.py --serve --run-jobs
+```
+
+Messages sent in the configured channel are processed as commands:
+
+| Message | Description |
+|---|---|
+| `<project>: <instruction>` | Queue a job on the default worker (gemini) |
+| `codex <project>: <instruction>` | Queue a job on Codex CLI |
+| `claude <project>: <instruction>` | Queue a job on Claude CLI |
+| `gemini <project>: <instruction>` | Queue a job on Gemini CLI |
+| `status` | List all jobs with their current status |
+| `gate` | List jobs waiting for human input |
+| `answer <job-id> <text>` | Answer a human gate and requeue the job |
+| `log <job-id>` | Show `summary.md` for a completed job |
+
+Examples:
+
+```text
+myproject: fizzbuzzを実装してください
+claude myproject: unit testも追加して
+answer 3 approved
+log 3
+```
+
+Projects must exist under the work root (`~/work/001_work/by-llms` by default) before sending a message.
+Use `python cli.py project create <name>` to create a new project directory with a starter `AGENTS.md`.
+
 ## Notes
 
 - `schema.sql` is the source of truth for SQLite schema.
@@ -47,3 +80,4 @@ python -m py_compile cli.py discord_bot.py fyws/*.py fyws/workers/*.py
 - Prompt templates can only become `active` via `template approve`.
 - `discord_bot.py` works as a dependency-free gateway helper by default.
 - `python discord_bot.py --serve --run-jobs` runs a live Discord gateway when `discord.py` is installed and `DISCORD_TOKEN` is set.
+- Jobs stuck in `running` state from a previous crash are automatically requeued when `dispatch --forever` starts.

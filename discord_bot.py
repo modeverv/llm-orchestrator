@@ -219,7 +219,10 @@ async def _runner_loop(client, notify_channel: dict, channel_id: int | None, db_
         def notify(job_id: int, project: str, status: str) -> None:
             notifications.append(format_job_notification(job_id, project, status, db_path))
 
-        await asyncio.to_thread(runner.run_once, db_path, max_workers, notify)
+        try:
+            await asyncio.to_thread(runner.run_once, db_path, max_workers, notify)
+        except Exception as exc:
+            print(f"runner error (continuing): {exc}", flush=True)
         channel = notify_channel.get("value")
         if channel is None and channel_id is not None:
             channel = client.get_channel(channel_id)
