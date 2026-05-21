@@ -222,3 +222,52 @@ Geminiトークン切れ検知
 - [x] Phase 4 実装済み
 - [x] Phase 5 実装済み
 - [x] Phase 6 実装済み（discord.pyはoptional依存。未導入環境ではhelperとして動作）
+
+---
+
+## MVP後の未成熟ポイント
+
+現在のPhase 1〜6は、標準ライブラリ中心のMVPとしてテスト済み。
+ただし「実案件を長時間放置で回す」運用品質としては、以下を次に詰めること。
+
+### P0: 実環境E2E
+
+- [ ] `discord.py` を導入した環境で `python discord_bot.py --serve --run-jobs` を実Discordチャンネルに接続して検証する
+- [ ] `DISCORD_TOKEN` と `FYWS_DISCORD_CHANNEL_ID` を使った実メッセージ往復を確認する
+- [ ] Gemini CLI実行で、実repoに対して `queued → running → succeeded/failed` と artifacts 生成を確認する
+- [ ] Claude CLI実行で、worker差し替えが実際に動くことを確認する
+- [ ] `~/work/<project>/AGENTS.md`, `SITE_CONTEXT.md`, `ACCEPTANCE.md` を持つ実projectを2つ以上作り、並列dispatchを確認する
+
+### P1: summary/context品質
+
+- [ ] `summary.md` の各セクションに、実際の `events.jsonl`, `git diff`, `job_events`, verification結果を反映する
+- [ ] token limit検知時に単なる完了summaryではなく、途中summary → 新context → retry/continue の流れを実装する
+- [ ] `context.md` に含める `ACCEPTANCE.md` の優先順位を明確化する（project default vs job-specific）
+- [ ] `diff.patch` が存在する場合の引き継ぎを、out-of-scope時だけでなく通常retry時にも検証する
+
+### P1: safe(T) と ownership
+
+- [ ] `ACCEPTANCE.md` から `C/O/I`, mode, ownership paths をパースして job 作成時の既定値にする
+- [ ] Discord指示から自動生成する `acceptance.md` の所有範囲を `.` 既定ではなく、project defaultから安全に絞る
+- [ ] deploy / DB変更 / secret操作は safe値に関係なく human_gate にする
+- [ ] ownership checkを `git diff --name-only` だけでなく untracked file も含めて検査する
+
+### P1: runner/lock運用
+
+- [ ] runnerを長時間動かしたときの stale lock 回収ルールを実装する
+- [ ] 同一project read jobの並列とwrite job待機が期待通りになる統合テストを追加する
+- [ ] workerプロセスのtimeout/cancelを実装する
+- [ ] job中断後のresume方針を明確化する（Gemini `--resume latest` をいつ使うか）
+
+### P2: evaluator/prompt改善
+
+- [ ] `propose_improvement()` を固定文のdraft生成ではなく、実metricsと失敗summaryを入力にしたLLM提案へ拡張する
+- [ ] prompt_templateのactive versionをjob作成時に自動選択する
+- [ ] template approve時に古いactiveをdeprecatedへ落とす挙動の統合テストを増やす
+
+### P2: 運用UX
+
+- [ ] `fyws project init/list` を追加して `~/work/<project>` を管理する
+- [ ] `fyws inspect <job-id>` でDB状態、artifacts、summary、diff、gateをまとめて表示する
+- [ ] `discord_bot.py log <job-id>` がsummary未生成時にevents/last_messageへフォールバックする
+- [ ] READMEに実Discord接続手順と最小systemd/launchd運用例を書く

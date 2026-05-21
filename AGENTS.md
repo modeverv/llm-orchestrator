@@ -14,6 +14,31 @@
 - 「たぶんこれで良い」という判断を自分でするな
 - 完了できなくても、現在地を正確に記録して止まることが正解
 
+## Codexアプリへの引き継ぎ
+
+現在のリポジトリは Phase 1〜6 のMVP実装済み。`python -m pytest -q` は27件通過済み。
+ただし実運用品質としては `PLAN.md` の「MVP後の未成熟ポイント」を次の作業契約にすること。
+
+優先順位:
+
+1. 実Discord接続E2E: `discord.py`, `DISCORD_TOKEN`, `FYWS_DISCORD_CHANNEL_ID`, `python discord_bot.py --serve --run-jobs`
+2. 実worker E2E: Gemini CLI / Claude CLI で実repoを変更し、artifactsとstatus遷移を確認
+3. `summary.md` 品質改善: events/diff/verification/job_events を固定スキーマへ反映
+4. `ACCEPTANCE.md` パース: safe(T), mode, ownership paths をproject defaultから読む
+5. 長時間runner運用: stale lock, timeout/cancel, resume, untracked file検査
+
+フルアクセス環境で最初に実行する確認:
+
+```bash
+git status --short
+python -m pytest -q
+python -m py_compile cli.py discord_bot.py fyws/*.py fyws/workers/*.py
+python discord_bot.py --help
+python cli.py --help
+```
+
+未成熟ポイントを「完成済み」と扱わないこと。MVPとして使える範囲と、実運用検証が必要な範囲を分けて進めること。
+
 ---
 
 ## プロジェクトの思想
