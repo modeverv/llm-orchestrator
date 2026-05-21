@@ -1,0 +1,8 @@
+jobs.sqlite3
+jobs.sqlite3-wal
+jobs.sqlite3-shm
+artifacts/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
