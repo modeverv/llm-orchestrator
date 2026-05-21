@@ -6,7 +6,7 @@ from pathlib import Path
 from .orchestrator import compute_safe, queue_job
 
 
-DEFAULT_WORK_ROOT = "~/work/by-llms"
+DEFAULT_WORK_ROOT = "~/work/001_work/by-llms"
 SUPPORTED_WORKERS = {"gemini", "claude", "codex"}
 
 
