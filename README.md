@@ -55,6 +55,7 @@ Messages sent in the configured channel are processed as commands:
 | `codex <project>: <instruction>` | Queue a job on Codex CLI |
 | `claude <project>: <instruction>` | Queue a job on Claude CLI |
 | `gemini <project>: <instruction>` | Queue a job on Gemini CLI |
+| `projects` | List project directories with job counts |
 | `status` | List all jobs with their current status |
 | `gate` | List jobs waiting for human input |
 | `answer <job-id> <text>` | Answer a human gate and requeue the job |

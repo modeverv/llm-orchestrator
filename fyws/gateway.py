@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .orchestrator import compute_safe, queue_job
+from .orchestrator import compute_safe, project_list, queue_job
 
 
 DEFAULT_WORK_ROOT = "~/work/001_work/by-llms"
@@ -155,6 +155,36 @@ def format_gate(job_id: int, project: str, reason: str, question: str) -> str:
 
 def format_completion(job_id: int, project: str, status: str) -> str:
     return f"{project} #{job_id} {status}"
+
+
+def list_projects(work_root: str | Path = DEFAULT_WORK_ROOT, db_path=None) -> list[dict]:
+    root = Path(work_root).expanduser().resolve()
+    dirs = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.exists() else []
+    stats: dict[str, dict] = {}
+    if db_path is not None:
+        for row in project_list(db_path):
+            stats[row["project"]] = row
+    return [{"project": name, **stats.get(name, {})} for name in dirs]
+
+
+def format_projects(projects: list[dict]) -> str:
+    if not projects:
+        return "no projects"
+    lines = []
+    for p in projects:
+        if "total" not in p:
+            lines.append(p["project"])
+            continue
+        parts = [p["project"]]
+        if p.get("running"):
+            parts.append(f"running={p['running']}")
+        if p.get("queued"):
+            parts.append(f"queued={p['queued']}")
+        if p.get("waiting_human"):
+            parts.append(f"waiting={p['waiting_human']}")
+        parts.append(f"done={p['succeeded']}✓ {p['failed']}✗")
+        lines.append("  ".join(parts))
+    return "\n".join(lines)
 
 
 def queue_from_message(

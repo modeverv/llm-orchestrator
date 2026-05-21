@@ -56,6 +56,9 @@ def main() -> int:
         return 0
 
     message = args.message.strip()
+    if message == "projects":
+        print(gateway.format_projects(gateway.list_projects(args.work_root, args.db)))
+        return 0
     if message == "status":
         jobs = orchestrator.list_jobs(args.db)
         if not jobs:
@@ -188,6 +191,8 @@ async def _message_poll_loop(
 
 def handle_message(message: str, work_root: str, db_path: str) -> str:
     text = message.strip()
+    if text == "projects":
+        return gateway.format_projects(gateway.list_projects(work_root, db_path))
     if text == "status":
         jobs = orchestrator.list_jobs(db_path)
         return "\n".join(gateway.format_completion(job["id"], job["project"], job["status"]) for job in jobs) or "no jobs"
