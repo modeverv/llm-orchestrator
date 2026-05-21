@@ -25,6 +25,10 @@
 - `PLAN.md`: recorded current P0 E2E results and remaining Claude auth blocker.
 - `fyws/workers/claude.py`: added `--permission-mode acceptEdits` so non-interactive Claude worker runs can edit files.
 - `tests/test_claude_worker.py`: added regression coverage for the Claude CLI command.
+- `fyws/workers/codex.py`: added Codex CLI worker using `codex exec`.
+- `tests/test_codex_worker.py`: added regression coverage for Codex worker command, missing executable handling, and nested message extraction.
+- `cli.py`, `fyws/orchestrator.py`: added `codex` as a routable worker choice.
+- `README.md`, `ARCHITECTURE.md`, `PLAN.md`: documented Codex worker support and E2E result.
 
 ## Commands Run
 - `git status --short`
@@ -50,6 +54,7 @@
 - Help commands: `python discord_bot.py --help` and `python cli.py --help` passed.
 - Live Discord/Gemini E2E: two real repos, `fyws-live-gemini-a` and `fyws-live-gemini-b`, both reached `queued → running → succeeded` in `/tmp/fyws-discord-live.sqlite3`.
 - Live Claude E2E: real repo `fyws-live-claude` reached `queued → running → succeeded` in `/tmp/fyws-claude-live.sqlite3` and changed `notes.txt`.
+- Live Codex E2E: real repo `fyws-live-codex` reached `queued → running → succeeded` in `/tmp/fyws-codex-live.sqlite3` and changed `notes.txt`.
 - Discord history showed queue replies and succeeded notifications.
 - Fixture repos under `/Users/seijiro/work/fyws-live-gemini-a` and `/Users/seijiro/work/fyws-live-gemini-b` are intentionally dirty from E2E (`notes.txt`, `task.md`, `task.acceptance.md`).
 
@@ -59,6 +64,8 @@
   - `#2 fyws-live-gemini-b succeeded worker=gemini safe_score=0.512 attempts=1`
 - `/tmp/fyws-claude-live.sqlite3` jobs:
   - `#1 fyws-live-claude succeeded worker=claude safe_score=0.512 attempts=1`
+- `/tmp/fyws-codex-live.sqlite3` jobs:
+  - `#1 fyws-live-codex succeeded worker=codex safe_score=0.512 attempts=1`
 - `notes.txt` contents:
   - `Gemini FYWS Discord live A ok.`
   - `Gemini FYWS Discord live B ok.`

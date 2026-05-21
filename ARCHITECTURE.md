@@ -65,7 +65,8 @@ jobをそもそも小さく分割してキューに積むのが基本方針。
 │  workers/                          │
 │    WorkerBase                      │
 │      ├── GeminiWorker              │  ← デフォルト（毎日トークンリセット）
-│      └── ClaudeWorker              │  ← 差し替え用
+│      ├── ClaudeWorker              │  ← 差し替え用
+│      └── CodexWorker               │  ← Codex CLI差し替え用
 └──────────────┬─────────────────────┘
                │
 ┌──────────────▼──────────────────────┐
@@ -205,7 +206,7 @@ class WorkerBase:
     ) -> WorkerResult: ...
 ```
 
-GeminiWorkerもClaudeWorkerもこのインターフェースを守る。
+GeminiWorkerもClaudeWorkerもCodexWorkerもこのインターフェースを守る。
 orchestratorはWorkerBaseしか知らない。
 
 ---

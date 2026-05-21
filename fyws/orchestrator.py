@@ -10,6 +10,7 @@ from . import evaluator, gate, lock, summarizer
 from .db import DEFAULT_DB_PATH, connect, init_db
 from .workers.base import WorkerBase, WorkerResult
 from .workers.claude import ClaudeWorker
+from .workers.codex import CodexWorker
 from .workers.gemini import GeminiWorker
 
 
@@ -200,6 +201,8 @@ def route_worker(name: str) -> WorkerBase:
         return GeminiWorker()
     if name == "claude":
         return ClaudeWorker()
+    if name == "codex":
+        return CodexWorker()
     raise ValueError(f"unknown worker: {name}")
 
 

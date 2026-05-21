@@ -186,6 +186,10 @@ def test_worker_requires_human_markers():
     assert not worker_requires_human("all done")
 
 
+def test_route_worker_supports_codex():
+    assert orchestrator.route_worker("codex").__class__.__name__ == "CodexWorker"
+
+
 def test_dot_ownership_allows_any_changed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
     db = tmp_path / "jobs.sqlite3"

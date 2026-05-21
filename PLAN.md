@@ -236,6 +236,7 @@ Geminiトークン切れ検知
 - [x] `DISCORD_TOKEN` と `FYWS_DISCORD_CHANNEL_ID` を使った実メッセージ往復を確認する
 - [x] Gemini CLI実行で、実repoに対して `queued → running → succeeded/failed` と artifacts 生成を確認する
 - [x] Claude CLI実行で、worker差し替えが実際に動くことを確認する
+- [x] Codex CLI実行で、worker差し替えが実際に動くことを確認する
 - [x] `~/work/<project>/AGENTS.md`, `SITE_CONTEXT.md`, `ACCEPTANCE.md` を持つ実projectを2つ以上作り、並列dispatchを確認する
 
 2026-05-22 P0実測:
@@ -244,6 +245,7 @@ Geminiトークン切れ検知
 - Gemini CLIは2つの実repoで `notes.txt` を変更し、`artifacts/<job-id>/prompt.md`, `events.jsonl`, `last_message.txt`, `summary.md`, `context.md` を生成。
 - 初回E2EでmacOS case-insensitive FS上の `acceptance.md` / `ACCEPTANCE.md` 衝突と、別DBでjob idが再利用された際のstale artifactを検出し修正済み。
 - Claude CLIは再認証後に実repo `fyws-live-claude` で `notes.txt` を変更し、`queued → running → succeeded` を確認済み。`--print` 単体では書き込み許可待ちになったため、ClaudeWorkerは `--permission-mode acceptEdits` を付けて非対話editを許可する。
+- Codex CLIは実repo `fyws-live-codex` で `notes.txt` を変更し、`queued → running → succeeded` を確認済み。CodexWorkerは `codex exec -C <cwd> --json --output-last-message <artifact>/last_message.txt --dangerously-bypass-approvals-and-sandbox -` を使う。
 
 ### P1: summary/context品質
 

@@ -8,6 +8,9 @@ from fyws import evaluator, gate, orchestrator, runner
 from fyws.db import DEFAULT_DB_PATH, connect, init_db
 
 
+WORKER_CHOICES = ["gemini", "claude", "codex"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="fyws")
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
@@ -20,7 +23,7 @@ def main() -> int:
     add.add_argument("--prompt", required=True)
     add.add_argument("--cwd", default=".")
     add.add_argument("--mode", choices=["read", "write", "deploy"], default="write")
-    add.add_argument("--worker", choices=["gemini", "claude"], default="gemini")
+    add.add_argument("--worker", choices=WORKER_CHOICES, default="gemini")
     add.add_argument("--c", type=float, default=0.8)
     add.add_argument("--o", type=float, default=0.8)
     add.add_argument("--i", type=float, default=0.2)
@@ -33,7 +36,7 @@ def main() -> int:
     run.add_argument("--project")
     run.add_argument("--cwd", default=".")
     run.add_argument("--mode", choices=["read", "write", "deploy"], default="write")
-    run.add_argument("--worker", choices=["gemini", "claude"], default="gemini")
+    run.add_argument("--worker", choices=WORKER_CHOICES, default="gemini")
     run.add_argument("--ownership", action="append", default=[])
     run.add_argument("--dry-run", action="store_true")
 
@@ -54,7 +57,7 @@ def main() -> int:
 
     worker = sub.add_parser("worker")
     worker.add_argument("job_id", type=int)
-    worker.add_argument("worker", choices=["gemini", "claude"])
+    worker.add_argument("worker", choices=WORKER_CHOICES)
 
     dispatch = sub.add_parser("dispatch")
     dispatch.add_argument("--max-workers", type=int, default=2)
