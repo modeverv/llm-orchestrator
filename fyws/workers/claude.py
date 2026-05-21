@@ -25,7 +25,7 @@ class ClaudeWorker:
 
         try:
             proc = subprocess.run(
-                [self.executable, "--print"],
+                [self.executable, "--print", "--permission-mode", "acceptEdits"],
                 input=prompt,
                 cwd=str(cwd),
                 text=True,

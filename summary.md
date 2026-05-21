@@ -23,6 +23,8 @@
 - `tests/test_gateway.py`: added concurrent DB init regressions and project `ACCEPTANCE.md` preservation test.
 - `tests/test_orchestrator.py`: added stale artifact cleanup regression test.
 - `PLAN.md`: recorded current P0 E2E results and remaining Claude auth blocker.
+- `fyws/workers/claude.py`: added `--permission-mode acceptEdits` so non-interactive Claude worker runs can edit files.
+- `tests/test_claude_worker.py`: added regression coverage for the Claude CLI command.
 
 ## Commands Run
 - `git status --short`
@@ -39,7 +41,7 @@
 ## Decisions Made
 - Do not require Discord privileged Message Content Intent by default; use channel history polling when `--message-content-intent` is not requested.
 - Keep `--allow-self-messages` explicit and E2E-only because processing bot-authored commands is useful for automated live checks but should not be the normal mode.
-- Treat Claude worker success as still incomplete because current environment lacks Claude auth and returns `401 Invalid authentication credentials`.
+- Treat Claude worker as operational after re-authentication and `acceptEdits` permission mode.
 - Record Gemini/Discord live success separately from Claude auth failure.
 
 ## Current State
@@ -47,6 +49,7 @@
 - Py compile: passed for `cli.py`, `discord_bot.py`, `fyws/*.py`, and `fyws/workers/*.py`.
 - Help commands: `python discord_bot.py --help` and `python cli.py --help` passed.
 - Live Discord/Gemini E2E: two real repos, `fyws-live-gemini-a` and `fyws-live-gemini-b`, both reached `queued → running → succeeded` in `/tmp/fyws-discord-live.sqlite3`.
+- Live Claude E2E: real repo `fyws-live-claude` reached `queued → running → succeeded` in `/tmp/fyws-claude-live.sqlite3` and changed `notes.txt`.
 - Discord history showed queue replies and succeeded notifications.
 - Fixture repos under `/Users/seijiro/work/fyws-live-gemini-a` and `/Users/seijiro/work/fyws-live-gemini-b` are intentionally dirty from E2E (`notes.txt`, `task.md`, `task.acceptance.md`).
 
@@ -54,6 +57,8 @@
 - `/tmp/fyws-discord-live.sqlite3` jobs:
   - `#1 fyws-live-gemini-a succeeded worker=gemini safe_score=0.512 attempts=1`
   - `#2 fyws-live-gemini-b succeeded worker=gemini safe_score=0.512 attempts=1`
+- `/tmp/fyws-claude-live.sqlite3` jobs:
+  - `#1 fyws-live-claude succeeded worker=claude safe_score=0.512 attempts=1`
 - `notes.txt` contents:
   - `Gemini FYWS Discord live A ok.`
   - `Gemini FYWS Discord live B ok.`
@@ -64,9 +69,7 @@
   - `fyws-live-gemini-a #1 succeeded`
 
 ## Blockers
-- Claude CLI is installed but not authenticated in this environment. Previous Claude E2E failed with `401 Invalid authentication credentials`.
 - True user-authored Discord message testing was not performed through the browser because GUI posting would require action-time confirmation. Automated live E2E used bot-authored messages with `--allow-self-messages`.
 
 ## Next Action
-- If Claude auth becomes available, run a Claude worker E2E against a small real repo and update the remaining P0 checkbox.
 - Optionally add a documented operator note for Discord deployments explaining `--message-content-intent` vs polling fallback.
