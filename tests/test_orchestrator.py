@@ -58,6 +58,26 @@ def test_run_job_with_fake_worker_succeeds(tmp_path, monkeypatch):
         assert metrics["n"] == 1
 
 
+def test_run_job_clears_stale_artifacts(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("rules", encoding="utf-8")
+    job_id = queue_job("p", task, tmp_path, ownership_paths=["owned.py"], db_path=db)
+    artifact_dir = orchestrator.ARTIFACTS_DIR / str(job_id)
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "summary.md").write_text("stale summary", encoding="utf-8")
+    (artifact_dir / "diff.patch").write_text("stale diff", encoding="utf-8")
+
+    run_job(job_id, db_path=db, worker_impl=FakeWorker())
+
+    assert "stale summary" not in (artifact_dir / "summary.md").read_text(encoding="utf-8")
+    assert not (artifact_dir / "diff.patch").exists()
+
+
 def test_next_job_context_includes_previous_summary(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
     db = tmp_path / "jobs.sqlite3"

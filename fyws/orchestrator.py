@@ -111,6 +111,7 @@ def run_job(
     ownership_paths = json.loads(job["ownership_paths"])
     result = WorkerResult(False, "", str(artifact_dir / "events.jsonl"), error="not run")
     try:
+        _clear_artifacts(artifact_dir)
         _prepare_artifacts(job, artifact_dir, db_path)
         worker = worker_impl or route_worker(job["worker"])
         with connect(db_path) as conn:
@@ -287,7 +288,7 @@ def _prepare_artifacts(job, artifact_dir: Path, db_path: str | Path) -> None:
     shutil.copyfile(job["prompt_path"], artifact_dir / "prompt.md")
     cwd = Path(job["cwd"])
     agents = cwd / "AGENTS.md"
-    task_acceptance = Path(job["prompt_path"]).parent / "acceptance.md"
+    task_acceptance = Path(job["prompt_path"]).parent / "task.acceptance.md"
     project_acceptance = cwd / "ACCEPTANCE.md"
     acceptance = task_acceptance if task_acceptance.exists() else project_acceptance
     site_context = cwd / "SITE_CONTEXT.md"
@@ -300,6 +301,13 @@ def _prepare_artifacts(job, artifact_dir: Path, db_path: str | Path) -> None:
         diff_path=(artifact_dir / "diff.patch") if (artifact_dir / "diff.patch").exists() else None,
         site_context_path=site_context if site_context.exists() else None,
     )
+
+
+def _clear_artifacts(artifact_dir: Path) -> None:
+    for name in ("prompt.md", "events.jsonl", "last_message.txt", "summary.md", "context.md", "diff.patch"):
+        path = artifact_dir / name
+        if path.exists():
+            path.unlink()
 
 
 def _event(conn, job_id: int, event_type: str, message: str, payload: dict | None = None) -> None:

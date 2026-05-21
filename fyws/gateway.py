@@ -55,7 +55,7 @@ def write_acceptance_file(
     i_score: float,
 ) -> Path:
     safe = compute_safe(c_score, o_score, i_score)
-    path = Path(project_path) / "acceptance.md"
+    path = Path(project_path) / "task.acceptance.md"
     ownership = "\n".join(f"    - {item}" for item in ownership_paths) or "    - ."
     content = f"""# ACCEPTANCE.md
 

@@ -23,6 +23,18 @@ def main() -> int:
     parser.add_argument("--run-jobs", action="store_true", help="run queued jobs in the Discord process")
     parser.add_argument("--max-workers", type=int, default=2)
     parser.add_argument("--interval", type=float, default=5)
+    parser.add_argument(
+        "--message-content-intent",
+        action="store_true",
+        default=_env_bool("FYWS_DISCORD_MESSAGE_CONTENT_INTENT", False),
+        help="request Discord's privileged message content intent instead of polling channel history",
+    )
+    parser.add_argument("--message-poll-interval", type=float, default=2)
+    parser.add_argument(
+        "--allow-self-messages",
+        action="store_true",
+        help="process messages sent by this bot; intended only for live E2E checks",
+    )
     args = parser.parse_args()
 
     if args.serve:
@@ -34,6 +46,9 @@ def main() -> int:
             run_jobs=args.run_jobs,
             max_workers=args.max_workers,
             interval_seconds=args.interval,
+            message_content_intent=args.message_content_intent,
+            message_poll_interval=args.message_poll_interval,
+            allow_self_messages=args.allow_self_messages,
         )
 
     if not args.message:
@@ -84,6 +99,9 @@ def serve_discord(
     run_jobs: bool = False,
     max_workers: int = 2,
     interval_seconds: float = 5,
+    message_content_intent: bool = False,
+    message_poll_interval: float = 2,
+    allow_self_messages: bool = False,
 ) -> int:
     if not token:
         raise SystemExit("DISCORD_TOKEN or --token is required")
@@ -93,19 +111,35 @@ def serve_discord(
         raise SystemExit("discord.py is required for --serve. Install it outside FYWS if you need the live bot.") from exc
 
     intents = discord.Intents.default()
-    intents.message_content = True
+    intents.message_content = message_content_intent
     client = discord.Client(intents=intents)
     notify_channel = {"value": None}
+    seen_message_id = {"value": None}
 
     @client.event
     async def on_ready():
         print(f"FYWS Discord gateway connected as {client.user}")
         if run_jobs:
             client.loop.create_task(_runner_loop(client, notify_channel, channel_id, db_path, max_workers, interval_seconds))
+        if not message_content_intent and channel_id is not None:
+            client.loop.create_task(
+                _message_poll_loop(
+                    client,
+                    notify_channel,
+                    seen_message_id,
+                    channel_id,
+                    work_root,
+                    db_path,
+                    message_poll_interval,
+                    allow_self_messages,
+                )
+            )
 
     @client.event
     async def on_message(message):
-        if message.author == client.user:
+        if not message_content_intent:
+            return
+        if message.author == client.user and not allow_self_messages:
             return
         if channel_id is not None and message.channel.id != channel_id:
             return
@@ -116,6 +150,40 @@ def serve_discord(
 
     client.run(token)
     return 0
+
+
+async def _message_poll_loop(
+    client,
+    notify_channel: dict,
+    seen_message_id: dict,
+    channel_id: int,
+    work_root: str,
+    db_path: str,
+    interval: float,
+    allow_self_messages: bool,
+) -> None:
+    channel = client.get_channel(channel_id) or await client.fetch_channel(channel_id)
+    notify_channel["value"] = channel
+    if seen_message_id["value"] is None:
+        async for message in channel.history(limit=1):
+            seen_message_id["value"] = message.id
+            break
+
+    while not client.is_closed():
+        messages = []
+        after = None
+        if seen_message_id["value"] is not None:
+            after = _discord_object(client, seen_message_id["value"])
+        async for message in channel.history(limit=20, after=after, oldest_first=True):
+            messages.append(message)
+        for message in messages:
+            seen_message_id["value"] = max(seen_message_id["value"] or 0, message.id)
+            if message.author == client.user and not allow_self_messages:
+                continue
+            response = handle_message(message.content, work_root, db_path)
+            if response:
+                await channel.send(response)
+        await asyncio.sleep(interval)
 
 
 def handle_message(message: str, work_root: str, db_path: str) -> str:
@@ -181,6 +249,19 @@ def format_job_notification(job_id: int, project: str, status: str, db_path: str
 def _env_int(name: str) -> int | None:
     value = os.environ.get(name)
     return int(value) if value else None
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _discord_object(client, object_id: int):
+    import discord
+
+    return discord.Object(id=object_id)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import concurrent.futures
+import subprocess
+import sys
+from pathlib import Path
+
 from fyws.gateway import (
     discover_ownership_paths,
     format_gate,
@@ -47,9 +52,63 @@ def test_queue_from_message_writes_task_and_acceptance(tmp_path):
     assert queued.safe_score == 0.5120000000000001
     assert queued.task_path.read_text(encoding="utf-8") == "fix css\n"
     acceptance = queued.acceptance_path.read_text(encoding="utf-8")
+    assert queued.acceptance_path.name == "task.acceptance.md"
     assert "safe = C x O x (1 - I): 0.512" in acceptance
     assert "mode: write" in acceptance
     assert format_queued(queued) == f"spobook #{queued.job_id} queued (safe=0.512)"
+
+
+def test_queue_from_message_does_not_overwrite_project_acceptance(tmp_path):
+    project = tmp_path / "spobook"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+    (project / "ACCEPTANCE.md").write_text("project defaults", encoding="utf-8")
+
+    queued = queue_from_message("spobook: fix css", work_root=tmp_path, db_path=tmp_path / "jobs.sqlite3")
+
+    assert queued.acceptance_path == project / "task.acceptance.md"
+    assert (project / "ACCEPTANCE.md").read_text(encoding="utf-8") == "project defaults"
+
+
+def test_queue_from_message_handles_parallel_db_init(tmp_path):
+    for name in ("clientA", "clientB"):
+        project = tmp_path / name
+        project.mkdir()
+        (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+
+    db = tmp_path / "jobs.sqlite3"
+    messages = ["clientA: fix css", "clientB: fix search"]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        queued = list(pool.map(lambda msg: queue_from_message(msg, work_root=tmp_path, db_path=db), messages))
+
+    assert sorted(job.project for job in queued) == ["clientA", "clientB"]
+    assert sorted(job.job_id for job in queued) == [1, 2]
+
+
+def test_discord_helper_handles_parallel_process_db_init(tmp_path):
+    for name in ("clientA", "clientB"):
+        project = tmp_path / name
+        project.mkdir()
+        (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+
+    root = Path(__file__).resolve().parent.parent
+    db = tmp_path / "jobs.sqlite3"
+    commands = [
+        [
+            sys.executable,
+            str(root / "discord_bot.py"),
+            "--work-root",
+            str(tmp_path),
+            "--db",
+            str(db),
+            message,
+        ]
+        for message in ("clientA: fix css", "clientB: fix search")
+    ]
+    procs = [subprocess.Popen(cmd, cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE) for cmd in commands]
+    results = [proc.communicate(timeout=10) + (proc.returncode,) for proc in procs]
+
+    assert all(returncode == 0 for _, _, returncode in results), results
 
 
 def test_format_gate_message():

@@ -232,11 +232,18 @@ Geminiトークン切れ検知
 
 ### P0: 実環境E2E
 
-- [ ] `discord.py` を導入した環境で `python discord_bot.py --serve --run-jobs` を実Discordチャンネルに接続して検証する
-- [ ] `DISCORD_TOKEN` と `FYWS_DISCORD_CHANNEL_ID` を使った実メッセージ往復を確認する
-- [ ] Gemini CLI実行で、実repoに対して `queued → running → succeeded/failed` と artifacts 生成を確認する
+- [x] `discord.py` を導入した環境で `python discord_bot.py --serve --run-jobs` を実Discordチャンネルに接続して検証する
+- [x] `DISCORD_TOKEN` と `FYWS_DISCORD_CHANNEL_ID` を使った実メッセージ往復を確認する
+- [x] Gemini CLI実行で、実repoに対して `queued → running → succeeded/failed` と artifacts 生成を確認する
 - [ ] Claude CLI実行で、worker差し替えが実際に動くことを確認する
-- [ ] `~/work/<project>/AGENTS.md`, `SITE_CONTEXT.md`, `ACCEPTANCE.md` を持つ実projectを2つ以上作り、並列dispatchを確認する
+- [x] `~/work/<project>/AGENTS.md`, `SITE_CONTEXT.md`, `ACCEPTANCE.md` を持つ実projectを2つ以上作り、並列dispatchを確認する
+
+2026-05-22 P0実測:
+- `FYWS_DISCORD_MESSAGE_CONTENT_INTENT` なしの環境ではDiscord privileged intentで起動失敗したため、指定チャンネル履歴polling fallbackを追加して接続確認済み。
+- Discordチャンネルに2件投入し、`fyws-live-gemini-a` / `fyws-live-gemini-b` が並列で `queued → running → succeeded`。queue返信と完了通知もDiscord履歴で確認済み。
+- Gemini CLIは2つの実repoで `notes.txt` を変更し、`artifacts/<job-id>/prompt.md`, `events.jsonl`, `last_message.txt`, `summary.md`, `context.md` を生成。
+- 初回E2EでmacOS case-insensitive FS上の `acceptance.md` / `ACCEPTANCE.md` 衝突と、別DBでjob idが再利用された際のstale artifactを検出し修正済み。
+- Claude CLIは存在確認済みだが、現環境では認証情報がなく `401 Invalid authentication credentials` で失敗。worker経路は起動するが、実Claude成功E2Eは未完。
 
 ### P1: summary/context品質
 
