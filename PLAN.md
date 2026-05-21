@@ -153,12 +153,13 @@ FYWS Bot:
 ```
 
 **Acceptance:**
-- [x] Discordの指定チャンネルに `「<project>: <指示>」` と書けばjobが生成される（外部接続なしの変換層）
-- [x] safe値とjob IDがDiscordに返ってくる（helper出力）
-- [x] human_gateの質問がDiscordに通知される（helper出力）
-- [x] Discordで答えるとjobが再開される（helper入力）
-- [x] `status` と書けば全jobの状況が返ってくる（helper出力）
-- [x] `log <job-id>` と書けばsummary.mdが返ってくる（helper出力）
+- [x] Discordの指定チャンネルに `「<project>: <指示>」` と書けばjobが生成される
+- [x] safe値とjob IDがDiscordに返ってくる
+- [x] human_gateの質問がDiscordに通知される
+- [x] Discordで答えるとjobが再開される
+- [x] `status` と書けば全jobの状況が返ってくる
+- [x] `log <job-id>` と書けばsummary.mdが返ってくる
+- [x] `--run-jobs` でDiscord gatewayプロセス内からqueued jobをdispatchして完了通知できる
 
 **実装対象:**
 ```
@@ -168,6 +169,7 @@ fyws/gateway.py     → Discordメッセージ → job生成の変換層
                        acceptance.mdの自動生成（safe値計算含む）
                        human_gate通知の送信
                        job完了通知の送信
+fyws/runner.py      → queued jobのdispatchループと完了通知
 ```
 
 **work directory convention:**
@@ -219,4 +221,4 @@ Geminiトークン切れ検知
 - [x] Phase 3 実装済み
 - [x] Phase 4 実装済み
 - [x] Phase 5 実装済み
-- [ ] Phase 6 実装中（helperは実装済み、実Discord接続は未完）
+- [x] Phase 6 実装済み（discord.pyはoptional依存。未導入環境ではhelperとして動作）

@@ -7,6 +7,13 @@
 
 今回は全てのgit 操作して良い。任意なタイミングでbranch切って作業しても良い。辛くなったらgitで過去に戻ってやり直しても良い。
 
+## オートパイロット時の行動規範
+
+- コンテキストが尽きる前に必ずsummary.mdを更新して止まれ
+- 判断が必要になったらコードを書くな。human_gateを開けて止まれ
+- 「たぶんこれで良い」という判断を自分でするな
+- 完了できなくても、現在地を正確に記録して止まることが正解
+
 ---
 
 ## プロジェクトの思想
@@ -48,11 +55,14 @@ fyws/
 │   ├── gate.py        # human_gate
 │   ├── summarizer.py  # summary.md生成
 │   ├── evaluator.py   # メトリクス記録・prompt改善提案
+│   ├── gateway.py     # Discord等の外部入力 → job生成
+│   ├── runner.py      # queued job dispatch loop
 │   └── workers/
 │       ├── base.py    # WorkerBase・WorkerResult
 │       ├── gemini.py  # GeminiWorker
 │       └── claude.py  # ClaudeWorker
 ├── cli.py             # エントリポイント（python cli.py job run など）
+├── discord_bot.py     # Discord gateway / helper
 ├── artifacts/         # job成果物（gitignore）
 │   └── <job-id>/
 │       ├── prompt.md

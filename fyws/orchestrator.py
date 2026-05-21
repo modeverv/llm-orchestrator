@@ -127,6 +127,16 @@ def run_job(
             _event(conn, job_id, "running", "job started")
 
         result = worker.run(job["prompt_path"], job["cwd"], artifact_dir, ownership_paths)
+        if worker_requires_human(result.last_message):
+            with connect(db_path) as conn:
+                gate.open_gate(
+                    conn,
+                    job_id,
+                    "Worker explicitly requested human judgment. Review before continuing.",
+                    "worker_requested_human",
+                )
+                _event(conn, job_id, "error", "worker requested human judgment")
+            return result
         out_of_scope = ownership_check(job["cwd"], ownership_paths)
         if out_of_scope:
             result.out_of_scope_files.extend(out_of_scope)
@@ -275,12 +285,20 @@ def dry_run_check(
 
 def _prepare_artifacts(job, artifact_dir: Path, db_path: str | Path) -> None:
     shutil.copyfile(job["prompt_path"], artifact_dir / "prompt.md")
-    agents = Path(job["cwd"]) / "AGENTS.md"
+    cwd = Path(job["cwd"])
+    agents = cwd / "AGENTS.md"
+    task_acceptance = Path(job["prompt_path"]).parent / "acceptance.md"
+    project_acceptance = cwd / "ACCEPTANCE.md"
+    acceptance = task_acceptance if task_acceptance.exists() else project_acceptance
+    site_context = cwd / "SITE_CONTEXT.md"
     summarizer.build_context(
         artifact_dir,
         agents,
         job["prompt_path"],
         previous_summary_path=_previous_summary_path(job, db_path),
+        acceptance_path=acceptance if acceptance.exists() else None,
+        diff_path=(artifact_dir / "diff.patch") if (artifact_dir / "diff.patch").exists() else None,
+        site_context_path=site_context if site_context.exists() else None,
     )
 
 
@@ -303,6 +321,8 @@ def _write_diff(cwd: str | Path, artifact_dir: Path) -> None:
 
 
 def _is_allowed(path: str, prefix: str) -> bool:
+    if prefix in ("", "."):
+        return True
     return path == prefix or path.startswith(prefix + "/")
 
 
@@ -321,3 +341,15 @@ def _previous_summary_path(job, db_path: str | Path) -> Path | None:
         return None
     path = ARTIFACTS_DIR / str(previous["id"]) / "summary.md"
     return path if path.exists() else None
+
+
+def worker_requires_human(message: str) -> bool:
+    markers = [
+        "判断が必要",
+        "人間の判断",
+        "human judgment",
+        "requires human",
+        "needs human",
+    ]
+    lower = message.lower()
+    return any(marker in message or marker in lower for marker in markers)

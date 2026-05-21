@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from fyws import evaluator, gate, orchestrator
+from fyws import evaluator, gate, orchestrator, runner
 from fyws.db import DEFAULT_DB_PATH, connect, init_db
 
 
@@ -56,6 +56,11 @@ def main() -> int:
     worker.add_argument("job_id", type=int)
     worker.add_argument("worker", choices=["gemini", "claude"])
 
+    dispatch = sub.add_parser("dispatch")
+    dispatch.add_argument("--max-workers", type=int, default=2)
+    dispatch.add_argument("--forever", action="store_true")
+    dispatch.add_argument("--interval", type=float, default=5)
+
     metrics = sub.add_parser("metrics")
     metrics_sub = metrics.add_subparsers(dest="metrics_command", required=True)
     metrics_sub.add_parser("show")
@@ -93,6 +98,13 @@ def main() -> int:
                 (args.worker, args.job_id),
             )
         print(f"job {args.job_id} worker={args.worker}")
+        return 0
+    if args.command == "dispatch":
+        if args.forever:
+            runner.run_forever(db_path, max_workers=args.max_workers, interval_seconds=args.interval)
+            return 0
+        completed = runner.run_once(db_path, max_workers=args.max_workers)
+        print(" ".join(str(job_id) for job_id in completed) if completed else "no queued jobs")
         return 0
     if args.command == "metrics":
         with connect(db_path) as conn:

@@ -48,11 +48,14 @@ def build_context(
     previous_summary_path: str | Path | None = None,
     acceptance_path: str | Path | None = None,
     diff_path: str | Path | None = None,
+    site_context_path: str | Path | None = None,
 ) -> Path:
     artifact = Path(artifact_dir)
     context_path = artifact / "context.md"
     parts: list[str] = []
     _append_file(parts, "AGENTS.md", agents_path)
+    if site_context_path:
+        _append_file(parts, "SITE_CONTEXT.md", site_context_path)
     if acceptance_path:
         _append_file(parts, "ACCEPTANCE.md", acceptance_path)
     _append_file(parts, "task.md", task_path)

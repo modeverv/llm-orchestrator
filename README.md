@@ -9,6 +9,7 @@ FYWS keeps orchestration deterministic in Python and stores state in SQLite. LLM
 ```bash
 python cli.py job add --project myproject --prompt task.md --cwd /path/to/repo --ownership path/to/edit.py
 python cli.py job run
+python cli.py dispatch --max-workers 2
 python cli.py status
 python cli.py log 1
 ```
@@ -33,4 +34,5 @@ python -m py_compile cli.py discord_bot.py fyws/*.py fyws/workers/*.py
 - `schema.sql` is the source of truth for SQLite schema.
 - Write jobs use the `locks` table before running workers.
 - Prompt templates can only become `active` via `template approve`.
-- `discord_bot.py` is currently a dependency-free gateway helper, not a connected Discord client.
+- `discord_bot.py` works as a dependency-free gateway helper by default.
+- `python discord_bot.py --serve --run-jobs` runs a live Discord gateway when `discord.py` is installed and `DISCORD_TOKEN` is set.
