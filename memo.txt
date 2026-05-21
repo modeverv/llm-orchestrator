@@ -30,3 +30,21 @@
   /Users/seijiro/Sync/sync_work/llm-orchestrator の AGENTS.md と PLAN.md を読ん
   で、PLAN.md の「MVP後の未成熟ポイント」を P0 から順に進めて。まず実Discord接続
   E2Eと実worker E2E。テストしてコミットまで。
+
+
+  P1項目が残っている:
+summary.md品質改善
+ACCEPTANCE.mdから safe/mode/ownership parse
+untracked file含むownership check
+stale lock / timeout / cancel / resume
+長時間runner運用の硬化
+
+codex myproj1: fizzbuzzを実装して
+claude myproj2: fizzbuzzを実装して
+gemini myproj3: fizzbuzzを実装して
+
+make project的なものとか
+リスト的なものとかを作る必要がある。
+
+落ちても続けるように頑張る
+

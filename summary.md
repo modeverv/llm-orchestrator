@@ -29,7 +29,7 @@
 - `tests/test_codex_worker.py`: added regression coverage for Codex worker command, missing executable handling, and nested message extraction.
 - `cli.py`, `fyws/orchestrator.py`: added `codex` as a routable worker choice.
 - `README.md`, `ARCHITECTURE.md`, `PLAN.md`: documented Codex worker support and E2E result.
-- `fyws/gateway.py`, `discord_bot.py`: added Discord worker-prefix parsing and changed the gateway default work root to `~/work/by-llms`.
+- `fyws/gateway.py`, `discord_bot.py`: added Discord worker-prefix parsing and changed the gateway default work root to `~/work/001_work/by-llms`.
 
 ## Commands Run
 - `git status --short`
@@ -72,9 +72,9 @@
   - `claude myproj2: ...`
   - `gemini myproj3: ...`
 - `/tmp/fyws-worker-prefix.sqlite3` verification:
-  - `myproj1` queued with `worker=codex` under `/Users/seijiro/work/by-llms/myproj1`
-  - `myproj2` queued with `worker=claude` under `/Users/seijiro/work/by-llms/myproj2`
-  - `myproj3` queued with `worker=gemini` under `/Users/seijiro/work/by-llms/myproj3`
+  - `myproj1` queued with `worker=codex` under `/Users/seijiro/work/001_work/by-llms/myproj1`
+  - `myproj2` queued with `worker=claude` under `/Users/seijiro/work/001_work/by-llms/myproj2`
+  - `myproj3` queued with `worker=gemini` under `/Users/seijiro/work/001_work/by-llms/myproj3`
 - `notes.txt` contents:
   - `Gemini FYWS Discord live A ok.`
   - `Gemini FYWS Discord live B ok.`

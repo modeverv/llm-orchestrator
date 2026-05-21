@@ -26,6 +26,7 @@ gemini myproj3: fizzbuzzを実装して
 Low `safe(T)` jobs are queued into `waiting_human`:
 
 ```bash
+env $(cat .env | xargs) python discord_bot.py --serve --run-jobs
 python cli.py gate list
 python cli.py gate answer 1 "approved"
 python cli.py job run --id 1
