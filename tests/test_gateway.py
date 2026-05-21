@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from fyws.db import connect
 from fyws.gateway import (
     discover_ownership_paths,
     format_gate,
@@ -18,6 +19,14 @@ def test_parse_project_message():
     parsed = parse_project_message("spobook: FAQページのCSS、レスポンシブ対応して")
     assert parsed.project == "spobook"
     assert parsed.instruction == "FAQページのCSS、レスポンシブ対応して"
+    assert parsed.worker == "gemini"
+
+
+def test_parse_project_message_with_worker_prefix():
+    parsed = parse_project_message("codex myproj1: fizzbuzzを実装して")
+    assert parsed.worker == "codex"
+    assert parsed.project == "myproj1"
+    assert parsed.instruction == "fizzbuzzを実装して"
 
 
 def test_parse_project_message_with_japanese_quotes():
@@ -49,13 +58,44 @@ def test_queue_from_message_writes_task_and_acceptance(tmp_path):
     (project / "AGENTS.md").write_text("rules", encoding="utf-8")
     queued = queue_from_message("spobook: fix css", work_root=tmp_path, db_path=tmp_path / "jobs.sqlite3")
     assert queued.project == "spobook"
+    assert queued.worker == "gemini"
     assert queued.safe_score == 0.5120000000000001
     assert queued.task_path.read_text(encoding="utf-8") == "fix css\n"
     acceptance = queued.acceptance_path.read_text(encoding="utf-8")
     assert queued.acceptance_path.name == "task.acceptance.md"
     assert "safe = C x O x (1 - I): 0.512" in acceptance
     assert "mode: write" in acceptance
-    assert format_queued(queued) == f"spobook #{queued.job_id} queued (safe=0.512)"
+    assert format_queued(queued) == f"spobook #{queued.job_id} queued worker=gemini (safe=0.512)"
+
+
+def test_queue_from_message_uses_worker_prefix(tmp_path):
+    project = tmp_path / "myproj1"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+    db = tmp_path / "jobs.sqlite3"
+
+    queued = queue_from_message("codex myproj1: fizzbuzzを実装して", work_root=tmp_path, db_path=db)
+
+    assert queued.worker == "codex"
+    assert queued.project == "myproj1"
+    assert queued.task_path.read_text(encoding="utf-8") == "fizzbuzzを実装して\n"
+    with connect(db) as conn:
+        row = conn.execute("SELECT worker FROM jobs WHERE id = ?", (queued.job_id,)).fetchone()
+    assert row["worker"] == "codex"
+
+
+def test_queue_from_message_explicit_worker_overrides_prefix(tmp_path):
+    project = tmp_path / "myproj1"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+    db = tmp_path / "jobs.sqlite3"
+
+    queued = queue_from_message("codex myproj1: fix", work_root=tmp_path, worker="claude", db_path=db)
+
+    assert queued.worker == "claude"
+    with connect(db) as conn:
+        row = conn.execute("SELECT worker FROM jobs WHERE id = ?", (queued.job_id,)).fetchone()
+    assert row["worker"] == "claude"
 
 
 def test_queue_from_message_does_not_overwrite_project_acceptance(tmp_path):

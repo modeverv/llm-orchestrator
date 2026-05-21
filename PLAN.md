@@ -174,7 +174,7 @@ fyws/runner.py      → queued jobのdispatchループと完了通知
 
 **work directory convention:**
 ```
-~/work/
+~/work/by-llms/
   <project-name>/
     AGENTS.md        ← プロジェクト固有のルール
     SITE_CONTEXT.md  ← システム固有の暗黙知（I値を下げるため）
@@ -182,8 +182,12 @@ fyws/runner.py      → queued jobのdispatchループと完了通知
 ```
 
 Discordで `「<project>: <指示>」` と書いたとき、FYWSは
-`~/work/<project>/` 配下のファイルを自動的にcontext.mdに含める。
+`~/work/by-llms/<project>/` 配下のファイルを自動的にcontext.mdに含める。
 プロジェクトのディレクトリを作ってAGENTS.mdを置くだけで認識される。
+
+現在のDiscord gateway既定ルートは `~/work/by-llms`。workerを明示する場合は
+`codex myproj1: ...` / `claude myproj2: ...` / `gemini myproj3: ...`
+の形式で書く。worker prefixなしの `<project>: ...` はGemini既定。
 
 **Project Digits / ローカルLLM との統合（オプション）:**
 ```
@@ -237,7 +241,7 @@ Geminiトークン切れ検知
 - [x] Gemini CLI実行で、実repoに対して `queued → running → succeeded/failed` と artifacts 生成を確認する
 - [x] Claude CLI実行で、worker差し替えが実際に動くことを確認する
 - [x] Codex CLI実行で、worker差し替えが実際に動くことを確認する
-- [x] `~/work/<project>/AGENTS.md`, `SITE_CONTEXT.md`, `ACCEPTANCE.md` を持つ実projectを2つ以上作り、並列dispatchを確認する
+- [x] `~/work/by-llms/<project>/AGENTS.md`, `SITE_CONTEXT.md`, `ACCEPTANCE.md` を持つ実projectを2つ以上作り、並列dispatchを確認する
 
 2026-05-22 P0実測:
 - `FYWS_DISCORD_MESSAGE_CONTENT_INTENT` なしの環境ではDiscord privileged intentで起動失敗したため、指定チャンネル履歴polling fallbackを追加して接続確認済み。
@@ -276,7 +280,7 @@ Geminiトークン切れ検知
 
 ### P2: 運用UX
 
-- [ ] `fyws project init/list` を追加して `~/work/<project>` を管理する
+- [ ] `fyws project init/list` を追加して `~/work/by-llms/<project>` を管理する
 - [ ] `fyws inspect <job-id>` でDB状態、artifacts、summary、diff、gateをまとめて表示する
 - [ ] `discord_bot.py log <job-id>` がsummary未生成時にevents/last_messageへフォールバックする
 - [ ] READMEに実Discord接続手順と最小systemd/launchd運用例を書く

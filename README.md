@@ -15,6 +15,14 @@ python cli.py status
 python cli.py log 1
 ```
 
+Discord gateway project directories default to `~/work/by-llms`. Worker-prefixed messages select the worker:
+
+```text
+codex myproj1: fizzbuzzを実装して
+claude myproj2: fizzbuzzを実装して
+gemini myproj3: fizzbuzzを実装して
+```
+
 Low `safe(T)` jobs are queued into `waiting_human`:
 
 ```bash

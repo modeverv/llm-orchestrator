@@ -13,9 +13,9 @@ def main() -> int:
     parser.add_argument(
         "message",
         nargs="?",
-        help="'<project>: <instruction>', 'status', 'log <job-id>', 'gate', or 'answer <job-id> <text>'",
+        help="'<project>: <instruction>', '<worker> <project>: <instruction>', 'status', 'log <job-id>', 'gate', or 'answer <job-id> <text>'",
     )
-    parser.add_argument("--work-root", default=os.environ.get("FYWS_WORK_ROOT", "~/work"))
+    parser.add_argument("--work-root", default=os.environ.get("FYWS_WORK_ROOT", gateway.DEFAULT_WORK_ROOT))
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
     parser.add_argument("--serve", action="store_true", help="run a Discord bot using discord.py")
     parser.add_argument("--token", default=os.environ.get("DISCORD_TOKEN"))

@@ -6,16 +6,22 @@ from pathlib import Path
 from .orchestrator import compute_safe, queue_job
 
 
+DEFAULT_WORK_ROOT = "~/work/by-llms"
+SUPPORTED_WORKERS = {"gemini", "claude", "codex"}
+
+
 @dataclass(frozen=True)
 class GatewayJob:
     project: str
     instruction: str
+    worker: str = "gemini"
 
 
 @dataclass(frozen=True)
 class QueuedGatewayJob:
     job_id: int
     project: str
+    worker: str
     safe_score: float
     status: str
     cwd: Path
@@ -26,13 +32,17 @@ class QueuedGatewayJob:
 def parse_project_message(message: str) -> GatewayJob:
     text = message.strip().strip("「」")
     if ":" not in text:
-        raise ValueError("message must be '<project>: <instruction>'")
+        raise ValueError("message must be '<project>: <instruction>' or '<worker> <project>: <instruction>'")
     project, instruction = text.split(":", 1)
     project = project.strip()
     instruction = instruction.strip()
+    worker = "gemini"
+    parts = project.split(maxsplit=1)
+    if len(parts) == 2 and parts[0] in SUPPORTED_WORKERS:
+        worker, project = parts[0], parts[1].strip()
     if not project or not instruction:
         raise ValueError("project and instruction are required")
-    return GatewayJob(project, instruction)
+    return GatewayJob(project, instruction, worker)
 
 
 def project_dir(work_root: str | Path, project: str) -> Path:
@@ -97,7 +107,7 @@ ownership:
 
 def format_queued(job: QueuedGatewayJob) -> str:
     prefix = "waiting_human" if job.status == "waiting_human" else "queued"
-    return f"{job.project} #{job.job_id} {prefix} (safe={job.safe_score:.3f})"
+    return f"{job.project} #{job.job_id} {prefix} worker={job.worker} (safe={job.safe_score:.3f})"
 
 
 def format_gate(job_id: int, project: str, reason: str, question: str) -> str:
@@ -110,14 +120,14 @@ def format_completion(job_id: int, project: str, status: str) -> str:
 
 def queue_from_message(
     message: str,
-    work_root: str | Path = "~/work",
+    work_root: str | Path = DEFAULT_WORK_ROOT,
     mode: str = "write",
-    worker: str = "gemini",
+    worker: str | None = None,
     c_score: float = 0.8,
     o_score: float = 0.8,
     i_score: float = 0.2,
     db_path: str | Path | None = None,
-) -> tuple[int, float]:
+) -> QueuedGatewayJob:
     parsed = parse_project_message(message)
     cwd = project_dir(work_root, parsed.project)
     if not cwd.exists():
@@ -142,7 +152,7 @@ def queue_from_message(
         task,
         cwd,
         mode=mode,
-        worker=worker,
+        worker=worker or parsed.worker,
         c_score=c_score,
         o_score=o_score,
         i_score=i_score,
@@ -150,7 +160,7 @@ def queue_from_message(
         **kwargs,
     )
     status = "waiting_human" if safe < 0.3 else "queued"
-    return QueuedGatewayJob(job_id, parsed.project, safe, status, cwd, task, acceptance)
+    return QueuedGatewayJob(job_id, parsed.project, worker or parsed.worker, safe, status, cwd, task, acceptance)
 
 
 def discover_ownership_paths(project_path: str | Path) -> list[str]:
