@@ -263,13 +263,15 @@ Geminiトークン切れ検知
 - [ ] `ACCEPTANCE.md` から `C/O/I`, mode, ownership paths をパースして job 作成時の既定値にする
 - [ ] Discord指示から自動生成する `acceptance.md` の所有範囲を `.` 既定ではなく、project defaultから安全に絞る
 - [ ] deploy / DB変更 / secret操作は safe値に関係なく human_gate にする
-- [ ] ownership checkを `git diff --name-only` だけでなく untracked file も含めて検査する
+- [ ] ownership checkを `git diff --name-only` だけでなく untracked file も含めて検査する（`git status --porcelain` で新規ファイルも拾う）
+- [ ] `worker_requires_human` の文字列マッチングを強化する（現状は固定キーワードのみ。LLMが想定外の表現を使うと素通りする）
 
 ### P1: runner/lock運用
 
 - [ ] runnerを長時間動かしたときの stale lock 回収ルールを実装する
 - [ ] 同一project read jobの並列とwrite job待機が期待通りになる統合テストを追加する
-- [ ] workerプロセスのtimeout/cancelを実装する
+- [ ] workerプロセスのtimeout/cancelを実装する（現状はハング時にプロセスが生きたまま詰まる。crash recoveryはプロセス死亡時にしか効かない）
+- [ ] `ClaudeWorker` をストリーミング化して token_in/out を取得する（現状は `--print` + blocking で tokens 常に None、長時間タスクで途中経過が見えない）
 - [ ] job中断後のresume方針を明確化する（Gemini `--resume latest` をいつ使うか）
 
 ### P2: evaluator/prompt改善
@@ -280,7 +282,9 @@ Geminiトークン切れ検知
 
 ### P2: 運用UX
 
-- [ ] `fyws project init/list` を追加して `~/work/001_work/by-llms/<project>` を管理する
+- [x] `fyws project create/list` を追加して `~/work/001_work/by-llms/<project>` を管理する（Discord `projects` コマンドも対応済み）
+- [ ] `cli project list`（jobsテーブルベース）と Discord `projects`（FSベース）の表示を統一する（jobがないプロジェクトがCLI側に出ない不整合）
+- [ ] Discord応答の2000文字制限を処理する（長いsummaryや大量jobが無言で切れる）
 - [ ] `fyws inspect <job-id>` でDB状態、artifacts、summary、diff、gateをまとめて表示する
 - [ ] `discord_bot.py log <job-id>` がsummary未生成時にevents/last_messageへフォールバックする
 - [ ] READMEに実Discord接続手順と最小systemd/launchd運用例を書く
