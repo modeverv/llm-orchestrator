@@ -175,7 +175,10 @@ def test_run_job_summary_includes_changed_files_commands_and_verification(tmp_pa
     assert "## Files Changed\n- owned.py" in summary
     assert "## Verification\n- $ python -c \"print('verified')\"" in summary
     assert "## Decisions Made\n- edited owned file" in summary
+    assert "queued: queued p safe=0.512" in summary
+    assert "succeeded: job completed" in summary
     assert "## Next Action\n- ship it" in summary
+    assert (orchestrator.ARTIFACTS_DIR / str(job_id) / "diff.patch").exists()
 
 
 def test_token_limit_opens_gate_and_records_summary_blocker(tmp_path, monkeypatch):
@@ -191,12 +194,17 @@ def test_token_limit_opens_gate_and_records_summary_blocker(tmp_path, monkeypatc
     run_job(job_id, db_path=db, worker_impl=FakeWorker(message="Reached maximum context length."))
 
     with connect(db) as conn:
-        job = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        gate_row = conn.execute("SELECT reason FROM human_requests WHERE job_id = ?", (job_id,)).fetchone()
+        job = conn.execute("SELECT status, last_error FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        continuation = conn.execute("SELECT * FROM jobs WHERE id != ?", (job_id,)).fetchone()
+        gate_row = conn.execute("SELECT reason FROM human_requests WHERE job_id = ?", (continuation["id"],)).fetchone()
     summary = (orchestrator.ARTIFACTS_DIR / str(job_id) / "summary.md").read_text(encoding="utf-8")
-    assert job["status"] == "waiting_human"
-    assert gate_row["reason"] == "token_limit_reached"
+    context = (orchestrator.ARTIFACTS_DIR / str(job_id) / "context.md").read_text(encoding="utf-8")
+    assert job["status"] == "failed"
+    assert job["last_error"] == "token limit reached; continuation job queued"
+    assert continuation["status"] == "waiting_human"
+    assert continuation["prompt_path"].endswith("continue_prompt.md")
     assert "## Blockers\n- token_limit_reached" in summary
+    assert "# previous summary.md" in context
 
 
 def test_run_job_clears_stale_artifacts(tmp_path, monkeypatch):
@@ -252,7 +260,30 @@ def test_context_includes_site_context_and_acceptance(tmp_path, monkeypatch):
     assert "# SITE_CONTEXT.md" in context
     assert "site facts" in context
     assert "# ACCEPTANCE.md" in context
+    assert "# ACCEPTANCE.md (project default)" in context
     assert "acceptance facts" in context
+
+
+def test_context_prefers_job_specific_acceptance_over_project_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    task_dir = tmp_path / "tasks"
+    task_dir.mkdir()
+    task = task_dir / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    (task_dir / "task.acceptance.md").write_text("job acceptance", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("rules", encoding="utf-8")
+    (tmp_path / "ACCEPTANCE.md").write_text("project acceptance", encoding="utf-8")
+
+    job_id = queue_job("p", task, tmp_path, db_path=db)
+    run_job(job_id, db_path=db, worker_impl=FakeWorker())
+
+    context = (orchestrator.ARTIFACTS_DIR / str(job_id) / "context.md").read_text(encoding="utf-8")
+    assert "# task.acceptance.md (job-specific)" in context
+    assert "job acceptance" in context
+    assert "project acceptance" not in context
 
 
 def test_dry_run_check_reports_safe_and_lock(tmp_path):
@@ -411,6 +442,30 @@ def test_dot_ownership_allows_any_changed_path(tmp_path, monkeypatch):
     with connect(db) as conn:
         job = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
         assert job["status"] == "succeeded"
+
+
+def test_retry_context_includes_previous_diff_patch(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("rules", encoding="utf-8")
+    (tmp_path / "owned.py").write_text("original", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    first = queue_job("p", task, tmp_path, ownership_paths=["owned.py"], db_path=db)
+    run_job(first, db_path=db, worker_impl=FakeWorker(write_file="owned.py"))
+    retry = orchestrator.retry_job(first, db)
+
+    run_job(retry, db_path=db, worker_impl=FakeWorker())
+
+    context = (orchestrator.ARTIFACTS_DIR / str(retry) / "context.md").read_text(encoding="utf-8")
+    assert "# diff.patch" in context
+    assert "owned.py" in context
 
 
 def test_prune_artifacts_deletes_old_completed_jobs_only(tmp_path, monkeypatch):

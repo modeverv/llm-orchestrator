@@ -158,15 +158,15 @@ def run_job(
             timeout_seconds=worker_timeout_seconds,
         )
         files_changed = sorted(git_status_paths(job["cwd"]) - ownership_baseline)
+        if files_changed:
+            _write_diff(job["cwd"], artifact_dir)
         if summarizer.token_limit_detected(result.last_message):
-            return _open_gate_and_summarize(
+            return _continue_after_token_limit(
                 db_path,
                 job_id,
                 artifact_dir,
                 job,
                 result,
-                "Token limit reached. Continue in a new session with the generated summary/context?",
-                "token_limit_reached",
                 files_changed,
                 verify_outputs,
             )
@@ -245,15 +245,6 @@ def run_job(
             )
 
         duration = time.monotonic() - start
-        summarizer.summarize(
-            artifact_dir,
-            Path(job["prompt_path"]).read_text(encoding="utf-8"),
-            job["cwd"],
-            status,
-            result.last_message,
-            files_changed=files_changed,
-            verify_outputs=verify_outputs,
-        )
         with connect(db_path) as conn:
             conn.execute(
                 """
@@ -265,6 +256,16 @@ def run_job(
             )
             _event(conn, job_id, status, result.error or "job completed")
             evaluator.record_metrics(conn, job_id, job["worker"], status, duration, result, job["prompt_template_id"])
+        summarizer.summarize(
+            artifact_dir,
+            Path(job["prompt_path"]).read_text(encoding="utf-8"),
+            job["cwd"],
+            status,
+            result.last_message,
+            files_changed=files_changed,
+            verify_outputs=verify_outputs,
+            job_events=_job_event_lines(db_path, job_id),
+        )
         return result
     except Exception as exc:
         with connect(db_path) as conn:
@@ -362,7 +363,10 @@ def retry_job(job_id: int, db_path: str | Path = DEFAULT_DB_PATH) -> int:
                 job["prompt_template_id"],
             ),
         )
-        return int(cur.lastrowid)
+        new_job_id = int(cur.lastrowid)
+        _event(conn, new_job_id, "queued", f"retry of job {job_id}")
+    _copy_retry_diff(job_id, new_job_id, db_path)
+    return new_job_id
 
 
 def log_lines(job_id: int) -> list[str]:
@@ -530,15 +534,21 @@ def _prepare_artifacts(job, artifact_dir: Path, db_path: str | Path) -> None:
     agents = cwd / "AGENTS.md"
     task_acceptance = Path(job["prompt_path"]).parent / "task.acceptance.md"
     project_acceptance = cwd / "ACCEPTANCE.md"
-    acceptance = task_acceptance if task_acceptance.exists() else project_acceptance
+    if task_acceptance.exists():
+        acceptance_path = task_acceptance
+        acceptance_title = "task.acceptance.md (job-specific)"
+    else:
+        acceptance_path = project_acceptance
+        acceptance_title = "ACCEPTANCE.md (project default)"
     site_context = cwd / "SITE_CONTEXT.md"
     summarizer.build_context(
         artifact_dir,
         agents,
         job["prompt_path"],
         previous_summary_path=_previous_summary_path(job, db_path),
-        acceptance_path=acceptance if acceptance.exists() else None,
-        diff_path=(artifact_dir / "diff.patch") if (artifact_dir / "diff.patch").exists() else None,
+        acceptance_path=acceptance_path if acceptance_path.exists() else None,
+        acceptance_title=acceptance_title,
+        diff_path=_context_diff_path(artifact_dir),
         site_context_path=site_context if site_context.exists() else None,
     )
 
@@ -594,8 +604,90 @@ def _open_gate_and_summarize(
         files_changed=files_changed,
         verify_outputs=verify_outputs,
         gate_reason=reason,
+        job_events=_job_event_lines(db_path, job_id),
     )
     return result
+
+
+def _continue_after_token_limit(
+    db_path: str | Path,
+    job_id: int,
+    artifact_dir: Path,
+    job,
+    result: WorkerResult,
+    files_changed: list[str],
+    verify_outputs: list[str] | None,
+) -> WorkerResult:
+    with connect(db_path) as conn:
+        _event(conn, job_id, "token_limit", "token limit detected; creating continuation job")
+    summary_path = summarizer.summarize(
+        artifact_dir,
+        Path(job["prompt_path"]).read_text(encoding="utf-8"),
+        job["cwd"],
+        "failed",
+        result.last_message,
+        files_changed=files_changed,
+        verify_outputs=verify_outputs,
+        gate_reason="token_limit_reached",
+        job_events=_job_event_lines(db_path, job_id),
+    )
+    _rebuild_context_with_current_summary(job, artifact_dir, db_path, summary_path)
+    continue_prompt = artifact_dir / "continue_prompt.md"
+    continue_prompt.write_text(
+        "# Continue FYWS Job\n\n"
+        "The previous worker run reached a token limit. Continue from the context below, "
+        "preserving the same acceptance criteria and ownership rules.\n\n"
+        + (artifact_dir / "context.md").read_text(encoding="utf-8", errors="replace"),
+        encoding="utf-8",
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'failed', last_error = ?, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            ("token limit reached; continuation job queued", job_id),
+        )
+        cur = conn.execute(
+            """
+            INSERT INTO jobs(
+                project, prompt_path, cwd, mode, worker, status, safe_score,
+                c_score, o_score, i_score, ownership_paths, prompt_template_id
+            ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job["project"],
+                str(continue_prompt),
+                job["cwd"],
+                job["mode"],
+                job["worker"],
+                job["safe_score"],
+                job["c_score"],
+                job["o_score"],
+                job["i_score"],
+                job["ownership_paths"],
+                job["prompt_template_id"],
+            ),
+        )
+        continuation_id = int(cur.lastrowid)
+        _event(conn, continuation_id, "queued", f"continuation of token-limited job {job_id}")
+        gate.open_gate(
+            conn,
+            continuation_id,
+            "Token limit reached. Continue in a new session with the generated summary/context?",
+            "token_limit_reached",
+        )
+    return WorkerResult(
+        False,
+        result.last_message,
+        result.events_path,
+        tokens_in=result.tokens_in,
+        tokens_out=result.tokens_out,
+        step_count=result.step_count,
+        out_of_scope_files=result.out_of_scope_files,
+        error="token limit reached; continuation job queued",
+    )
 
 
 def _should_gate_after_failure(db_path: str | Path, job_id: int) -> bool:
@@ -607,6 +699,59 @@ def _should_gate_after_failure(db_path: str | Path, job_id: int) -> bool:
 def _write_diff(cwd: str | Path, artifact_dir: Path) -> None:
     proc = subprocess.run(["git", "diff"], cwd=str(cwd), text=True, capture_output=True, check=False)
     (artifact_dir / "diff.patch").write_text(proc.stdout, encoding="utf-8")
+
+
+def _rebuild_context_with_current_summary(job, artifact_dir: Path, db_path: str | Path, summary_path: Path) -> None:
+    cwd = Path(job["cwd"])
+    task_acceptance = Path(job["prompt_path"]).parent / "task.acceptance.md"
+    if task_acceptance.exists():
+        acceptance_path = task_acceptance
+        acceptance_title = "task.acceptance.md (job-specific)"
+    else:
+        acceptance_path = cwd / "ACCEPTANCE.md"
+        acceptance_title = "ACCEPTANCE.md (project default)"
+    summarizer.build_context(
+        artifact_dir,
+        cwd / "AGENTS.md",
+        job["prompt_path"],
+        previous_summary_path=summary_path,
+        acceptance_path=acceptance_path if acceptance_path.exists() else None,
+        acceptance_title=acceptance_title,
+        diff_path=_context_diff_path(artifact_dir),
+        site_context_path=(cwd / "SITE_CONTEXT.md") if (cwd / "SITE_CONTEXT.md").exists() else None,
+    )
+
+
+def _copy_retry_diff(source_job_id: int, new_job_id: int, db_path: str | Path) -> None:
+    artifact_root = artifacts_dir_for_db(db_path)
+    source = artifact_root / str(source_job_id) / "diff.patch"
+    if not source.exists():
+        return
+    target_dir = artifact_root / str(new_job_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target_dir / "carryover.diff.patch")
+
+
+def _job_event_lines(db_path: str | Path, job_id: int) -> list[str]:
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT event_type, message
+            FROM job_events
+            WHERE job_id = ?
+            ORDER BY id
+            """,
+            (job_id,),
+        ).fetchall()
+    return [f"{row['event_type']}: {row['message']}" for row in rows]
+
+
+def _context_diff_path(artifact_dir: Path) -> Path | None:
+    for name in ("carryover.diff.patch", "diff.patch"):
+        path = artifact_dir / name
+        if path.exists():
+            return path
+    return None
 
 
 def _is_allowed(path: str, prefix: str) -> bool:

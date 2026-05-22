@@ -35,6 +35,7 @@ def summarize(
     files_changed: list[str] | None = None,
     verify_outputs: list[str] | None = None,
     gate_reason: str | None = None,
+    job_events: list[str] | None = None,
 ) -> Path:
     artifact = Path(artifact_dir)
     summary_path = artifact / "summary.md"
@@ -48,7 +49,7 @@ def summarize(
         "Files Changed": files_changed or [],
         "Commands Run": _commands_from_events(artifact / "events.jsonl"),
         "Decisions Made": decisions,
-        "Current State": [status],
+        "Current State": [status, *(job_events or [])],
         "Verification": _verification_lines(verify_outputs),
         "Blockers": [gate_reason] if gate_reason else [],
         "Next Action": next_action,
@@ -73,6 +74,7 @@ def build_context(
     task_path: str | Path,
     previous_summary_path: str | Path | None = None,
     acceptance_path: str | Path | None = None,
+    acceptance_title: str = "ACCEPTANCE.md",
     diff_path: str | Path | None = None,
     site_context_path: str | Path | None = None,
 ) -> Path:
@@ -83,7 +85,7 @@ def build_context(
     if site_context_path:
         _append_file(parts, "SITE_CONTEXT.md", site_context_path)
     if acceptance_path:
-        _append_file(parts, "ACCEPTANCE.md", acceptance_path)
+        _append_file(parts, acceptance_title, acceptance_path)
     _append_file(parts, "task.md", task_path)
     if previous_summary_path:
         _append_file(parts, "previous summary.md", previous_summary_path)
