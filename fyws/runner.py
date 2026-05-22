@@ -30,6 +30,7 @@ def run_once(
     notifier: Notifier | None = None,
     worker_timeout_seconds: float | None = None,
     stale_lock_seconds: float = DEFAULT_STALE_LOCK_SECONDS,
+    auto_continue_token_limit: bool = False,
 ) -> list[int]:
     init_db(db_path)
     with connect(db_path) as conn:
@@ -45,7 +46,7 @@ def run_once(
     completed: list[int] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         future_to_id = {
-            pool.submit(_run_job, job_id, db_path, worker_timeout_seconds): job_id
+            pool.submit(_run_job, job_id, db_path, worker_timeout_seconds, auto_continue_token_limit): job_id
             for job_id in ids
         }
         for future in concurrent.futures.as_completed(future_to_id):
@@ -65,6 +66,7 @@ def run_forever(
     notifier: Notifier | None = None,
     worker_timeout_seconds: float | None = None,
     stale_lock_seconds: float = DEFAULT_STALE_LOCK_SECONDS,
+    auto_continue_token_limit: bool = False,
 ) -> None:
     from .orchestrator import recover_stuck_jobs
 
@@ -79,6 +81,7 @@ def run_forever(
                 notifier=notifier,
                 worker_timeout_seconds=worker_timeout_seconds,
                 stale_lock_seconds=stale_lock_seconds,
+                auto_continue_token_limit=auto_continue_token_limit,
             )
         except Exception as exc:
             print(f"runner error (continuing): {exc}", flush=True)
@@ -116,7 +119,17 @@ def _virtual_conflict(locks: list[tuple[str, str, str]], project: str, cwd: str,
     return bool(modes)
 
 
-def _run_job(job_id: int, db_path: str | Path, worker_timeout_seconds: float | None):
-    if worker_timeout_seconds is None:
+def _run_job(
+    job_id: int,
+    db_path: str | Path,
+    worker_timeout_seconds: float | None,
+    auto_continue_token_limit: bool,
+):
+    if worker_timeout_seconds is None and not auto_continue_token_limit:
         return run_job(job_id, db_path)
-    return run_job(job_id, db_path, None, worker_timeout_seconds)
+    return run_job(
+        job_id,
+        db_path,
+        worker_timeout_seconds=worker_timeout_seconds,
+        auto_continue_token_limit=auto_continue_token_limit,
+    )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fyws.workers.base import WorkerResult
-from fyws.workers.gemini import _extract_message
+from fyws.workers.gemini import _extract_command, _extract_message
 
 
 def test_worker_result_defaults_are_independent():
@@ -16,3 +16,13 @@ def test_worker_result_defaults_are_independent():
 def test_extract_gemini_candidate_message():
     event = {"candidates": [{"content": {"parts": [{"text": "done"}]}}]}
     assert _extract_message(event) == "done"
+
+
+def test_extract_gemini_function_call_command():
+    event = {"functionCall": {"name": "run_shell_command", "args": {"command": "python -m pytest -q"}}}
+    assert _extract_command(event) == "python -m pytest -q"
+
+
+def test_extract_gemini_text_command_line():
+    event = {"text": "Command: git status --short"}
+    assert _extract_command(event) == "git status --short"

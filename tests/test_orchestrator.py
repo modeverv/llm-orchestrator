@@ -207,6 +207,38 @@ def test_token_limit_opens_gate_and_records_summary_blocker(tmp_path, monkeypatc
     assert "# previous summary.md" in context
 
 
+def test_token_limit_auto_continue_keeps_continuation_queued(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("rules", encoding="utf-8")
+    job_id = queue_job("p", task, tmp_path, db_path=db)
+
+    run_job(
+        job_id,
+        db_path=db,
+        worker_impl=FakeWorker(message="Reached maximum context length."),
+        auto_continue_token_limit=True,
+    )
+
+    with connect(db) as conn:
+        continuation = conn.execute("SELECT * FROM jobs WHERE id != ?", (job_id,)).fetchone()
+        gate_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM human_requests WHERE job_id = ?",
+            (continuation["id"],),
+        ).fetchone()
+        event = conn.execute(
+            "SELECT event_type FROM job_events WHERE job_id = ? AND event_type = 'auto_continue'",
+            (continuation["id"],),
+        ).fetchone()
+    assert continuation["status"] == "queued"
+    assert gate_count["n"] == 0
+    assert event is not None
+
+
 def test_run_job_clears_stale_artifacts(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
     db = tmp_path / "jobs.sqlite3"
@@ -422,6 +454,27 @@ def test_job_log_text_falls_back_to_events_then_last_message(tmp_path, monkeypat
     assert orchestrator.job_log_text(9) == '{"message":"event"}\n'
     (artifact / "events.jsonl").unlink()
     assert orchestrator.job_log_text(9) == "last"
+
+
+def test_job_log_text_uses_artifacts_for_non_default_db(tmp_path):
+    db = tmp_path / "state" / "jobs.sqlite3"
+    artifact = db.parent / "artifacts" / "7"
+    artifact.mkdir(parents=True)
+    (artifact / "summary.md").write_text("custom db summary", encoding="utf-8")
+
+    assert orchestrator.job_log_text(7, db_path=db) == "custom db summary"
+    assert orchestrator.log_lines(7, db_path=db) == []
+
+
+def test_artifacts_dir_for_db_routes_default_custom_and_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("FYWS_ARTIFACTS_DIR", raising=False)
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "default-artifacts")
+
+    assert orchestrator.artifacts_dir_for_db() == tmp_path / "default-artifacts"
+    assert orchestrator.artifacts_dir_for_db(tmp_path / "custom" / "jobs.sqlite3") == tmp_path / "custom" / "artifacts"
+
+    monkeypatch.setenv("FYWS_ARTIFACTS_DIR", str(tmp_path / "env-artifacts"))
+    assert orchestrator.artifacts_dir_for_db(tmp_path / "custom" / "jobs.sqlite3") == tmp_path / "env-artifacts"
 
 
 def test_dot_ownership_allows_any_changed_path(tmp_path, monkeypatch):

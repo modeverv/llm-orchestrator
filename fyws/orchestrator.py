@@ -111,6 +111,7 @@ def run_job(
     db_path: str | Path = DEFAULT_DB_PATH,
     worker_impl: WorkerBase | None = None,
     worker_timeout_seconds: float | None = None,
+    auto_continue_token_limit: bool = False,
 ) -> WorkerResult:
     init_db(db_path)
     with connect(db_path) as conn:
@@ -169,6 +170,7 @@ def run_job(
                 result,
                 files_changed,
                 verify_outputs,
+                auto_continue_token_limit,
             )
         if worker_requires_human(result.last_message):
             return _open_gate_and_summarize(
@@ -265,6 +267,7 @@ def run_job(
             files_changed=files_changed,
             verify_outputs=verify_outputs,
             job_events=_job_event_lines(db_path, job_id),
+            agents_path=Path(job["cwd"]) / "AGENTS.md",
         )
         return result
     except Exception as exc:
@@ -369,15 +372,15 @@ def retry_job(job_id: int, db_path: str | Path = DEFAULT_DB_PATH) -> int:
     return new_job_id
 
 
-def log_lines(job_id: int) -> list[str]:
-    path = ARTIFACTS_DIR / str(job_id) / "events.jsonl"
+def log_lines(job_id: int, db_path: str | Path = DEFAULT_DB_PATH) -> list[str]:
+    path = artifacts_dir_for_db(db_path) / str(job_id) / "events.jsonl"
     if not path.exists():
         return []
     return path.read_text(encoding="utf-8", errors="replace").splitlines()
 
 
-def job_log_text(job_id: int) -> str:
-    artifact = ARTIFACTS_DIR / str(job_id)
+def job_log_text(job_id: int, db_path: str | Path = DEFAULT_DB_PATH) -> str:
+    artifact = artifacts_dir_for_db(db_path) / str(job_id)
     for name in ("summary.md", "events.jsonl", "last_message.txt"):
         path = artifact / name
         if path.exists():
@@ -486,8 +489,9 @@ def dry_run_check(
 
 
 def artifacts_dir_for_db(db_path: str | Path = DEFAULT_DB_PATH) -> Path:
-    if os.environ.get("FYWS_ARTIFACTS_DIR"):
-        return ARTIFACTS_DIR
+    configured = os.environ.get("FYWS_ARTIFACTS_DIR")
+    if configured:
+        return Path(configured).expanduser()
     resolved_db = Path(db_path).expanduser().resolve()
     if resolved_db == Path(DEFAULT_DB_PATH).resolve():
         return ARTIFACTS_DIR
@@ -605,6 +609,7 @@ def _open_gate_and_summarize(
         verify_outputs=verify_outputs,
         gate_reason=reason,
         job_events=_job_event_lines(db_path, job_id),
+        agents_path=Path(job["cwd"]) / "AGENTS.md",
     )
     return result
 
@@ -617,6 +622,7 @@ def _continue_after_token_limit(
     result: WorkerResult,
     files_changed: list[str],
     verify_outputs: list[str] | None,
+    auto_continue: bool = False,
 ) -> WorkerResult:
     with connect(db_path) as conn:
         _event(conn, job_id, "token_limit", "token limit detected; creating continuation job")
@@ -630,6 +636,7 @@ def _continue_after_token_limit(
         verify_outputs=verify_outputs,
         gate_reason="token_limit_reached",
         job_events=_job_event_lines(db_path, job_id),
+        agents_path=Path(job["cwd"]) / "AGENTS.md",
     )
     _rebuild_context_with_current_summary(job, artifact_dir, db_path, summary_path)
     continue_prompt = artifact_dir / "continue_prompt.md"
@@ -672,12 +679,15 @@ def _continue_after_token_limit(
         )
         continuation_id = int(cur.lastrowid)
         _event(conn, continuation_id, "queued", f"continuation of token-limited job {job_id}")
-        gate.open_gate(
-            conn,
-            continuation_id,
-            "Token limit reached. Continue in a new session with the generated summary/context?",
-            "token_limit_reached",
-        )
+        if auto_continue:
+            _event(conn, continuation_id, "auto_continue", "token-limit continuation queued without human gate")
+        else:
+            gate.open_gate(
+                conn,
+                continuation_id,
+                "Token limit reached. Continue in a new session with the generated summary/context?",
+                "token_limit_reached",
+            )
     return WorkerResult(
         False,
         result.last_message,

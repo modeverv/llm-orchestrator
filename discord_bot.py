@@ -25,6 +25,7 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=5)
     parser.add_argument("--worker-timeout", type=float)
     parser.add_argument("--stale-lock-seconds", type=float, default=runner.DEFAULT_STALE_LOCK_SECONDS)
+    parser.add_argument("--auto-continue-token-limit", action="store_true")
     parser.add_argument(
         "--message-content-intent",
         action="store_true",
@@ -50,6 +51,7 @@ def main() -> int:
             interval_seconds=args.interval,
             worker_timeout_seconds=args.worker_timeout,
             stale_lock_seconds=args.stale_lock_seconds,
+            auto_continue_token_limit=args.auto_continue_token_limit,
             message_content_intent=args.message_content_intent,
             message_poll_interval=args.message_poll_interval,
             allow_self_messages=args.allow_self_messages,
@@ -88,7 +90,7 @@ def main() -> int:
         return 0
     if message.startswith("log "):
         job_id = int(message.split(maxsplit=1)[1].lstrip("#"))
-        print(orchestrator.job_log_text(job_id), end="")
+        print(orchestrator.job_log_text(job_id, args.db), end="")
         return 0
 
     queued = gateway.queue_from_message(message, args.work_root, db_path=args.db)
@@ -106,6 +108,7 @@ def serve_discord(
     interval_seconds: float = 5,
     worker_timeout_seconds: float | None = None,
     stale_lock_seconds: float = runner.DEFAULT_STALE_LOCK_SECONDS,
+    auto_continue_token_limit: bool = False,
     message_content_intent: bool = False,
     message_poll_interval: float = 2,
     allow_self_messages: bool = False,
@@ -137,6 +140,7 @@ def serve_discord(
                     interval_seconds,
                     worker_timeout_seconds,
                     stale_lock_seconds,
+                    auto_continue_token_limit,
                 )
             )
         if not message_content_intent and channel_id is not None:
@@ -224,7 +228,7 @@ def handle_message(message: str, work_root: str, db_path: str) -> str:
         return f"queued #{job_id.lstrip('#')}"
     if text.startswith("log "):
         job_id = int(text.split(maxsplit=1)[1].lstrip("#"))
-        return orchestrator.job_log_text(job_id)
+        return orchestrator.job_log_text(job_id, db_path)
     if ":" in text:
         queued = gateway.queue_from_message(text, work_root, db_path=db_path)
         return gateway.format_queued(queued)
@@ -240,6 +244,7 @@ async def _runner_loop(
     interval: float,
     worker_timeout_seconds: float | None,
     stale_lock_seconds: float,
+    auto_continue_token_limit: bool,
 ) -> None:
     while not client.is_closed():
         notifications: list[str] = []
@@ -255,6 +260,7 @@ async def _runner_loop(
                 notify,
                 worker_timeout_seconds,
                 stale_lock_seconds,
+                auto_continue_token_limit,
             )
         except Exception as exc:
             print(f"runner error (continuing): {exc}", flush=True)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import selectors
 import signal
 import subprocess
@@ -113,6 +114,10 @@ def _record_line(events, line: str, last_message: str, tokens_in: int | None, to
         if line.strip():
             last_message = line.strip()
         return last_message, tokens_in, tokens_out, step_count
+    command = _extract_command(parsed)
+    if command:
+        events.write(json.dumps({"event_type": "command", "command": command}, ensure_ascii=False) + "\n")
+        events.flush()
     message = _extract_message(parsed)
     if message:
         last_message = message
@@ -160,6 +165,67 @@ def _extract_message(event: dict) -> str:
         parts = content.get("parts", []) if isinstance(content, dict) else []
         texts = [part.get("text", "") for part in parts if isinstance(part, dict)]
         return "\n".join(text for text in texts if text).strip()
+    return ""
+
+
+def _extract_command(event: dict) -> str:
+    direct = _command_from_mapping(event)
+    if direct:
+        return direct
+    for call in _iter_tool_calls(event):
+        command = _command_from_mapping(call)
+        if command:
+            return command
+        args = call.get("args") or call.get("arguments") or call.get("input") or {}
+        if isinstance(args, str):
+            parsed_args = _parse_json_line(args)
+            args = parsed_args if parsed_args is not None else {"command": args}
+        if isinstance(args, dict):
+            command = _command_from_mapping(args)
+            if command:
+                return command
+    message = _extract_message(event)
+    return _command_from_text(message)
+
+
+def _iter_tool_calls(value):
+    if isinstance(value, dict):
+        if any(key in value for key in ("functionCall", "function_call", "tool_call")):
+            for key in ("functionCall", "function_call", "tool_call"):
+                call = value.get(key)
+                if isinstance(call, dict):
+                    yield call
+        calls = value.get("tool_calls") or value.get("function_calls")
+        if isinstance(calls, list):
+            for call in calls:
+                if isinstance(call, dict):
+                    yield call
+        for nested in value.values():
+            yield from _iter_tool_calls(nested)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _iter_tool_calls(item)
+
+
+def _command_from_mapping(value: dict) -> str:
+    for key in ("command", "cmd", "shell_command"):
+        raw = value.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    argv = value.get("argv")
+    if isinstance(argv, list) and argv:
+        return " ".join(str(part) for part in argv)
+    return ""
+
+
+def _command_from_text(text: str) -> str:
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("$ "):
+            return stripped[2:].strip()
+        match = re.match(r"^(?:run|exec|shell|bash|command):\s*(.+)$", stripped, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
     return ""
 
 

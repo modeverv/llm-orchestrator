@@ -18,6 +18,10 @@ SUMMARY_SECTIONS = [
     "Next Action",
 ]
 
+DEFAULT_NON_NEGOTIABLE_RULES = [
+    "State lives in SQLite, writes require locks, workers stay replaceable, human_gate controls unsafe judgment, and ownership paths must be enforced."
+]
+
 
 def fixed_empty_summary() -> str:
     lines = ["# Job Summary", ""]
@@ -36,6 +40,7 @@ def summarize(
     verify_outputs: list[str] | None = None,
     gate_reason: str | None = None,
     job_events: list[str] | None = None,
+    agents_path: str | Path | None = None,
 ) -> Path:
     artifact = Path(artifact_dir)
     summary_path = artifact / "summary.md"
@@ -43,9 +48,7 @@ def summarize(
     sections = {
         "User Goal": [_clip_line(user_goal)],
         "Repo / CWD": [cwd],
-        "Non-Negotiable Rules": [
-            "State lives in SQLite, writes require locks, workers stay replaceable, human_gate controls unsafe judgment, and ownership paths must be enforced."
-        ],
+        "Non-Negotiable Rules": _non_negotiable_rules(agents_path),
         "Files Changed": files_changed or [],
         "Commands Run": _commands_from_events(artifact / "events.jsonl"),
         "Decisions Made": decisions,
@@ -116,6 +119,53 @@ def _commands_from_events(events_path: Path) -> list[str]:
         if command and command not in commands:
             commands.append(command)
     return commands
+
+
+def _non_negotiable_rules(agents_path: str | Path | None) -> list[str]:
+    if agents_path is None:
+        return DEFAULT_NON_NEGOTIABLE_RULES
+    path = Path(agents_path)
+    if not path.exists():
+        return DEFAULT_NON_NEGOTIABLE_RULES
+    text = path.read_text(encoding="utf-8", errors="replace")
+    section = _extract_agents_section(
+        text,
+        [
+            "non-negotiable rules",
+            "non negotiable rules",
+            "非交渉ルール",
+            "絶対に守ること",
+        ],
+    )
+    if section:
+        return section
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line:
+            return [_clip_line(line)]
+    return DEFAULT_NON_NEGOTIABLE_RULES
+
+
+def _extract_agents_section(text: str, headings: list[str]) -> list[str]:
+    values: list[str] = []
+    capture = False
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        normalized = stripped.lstrip("#").strip().lower()
+        if stripped.startswith("#") and any(heading in normalized for heading in headings):
+            capture = True
+            continue
+        if capture and stripped.startswith("#"):
+            break
+        if not capture or not stripped:
+            continue
+        cleaned = re.sub(r"^[-*]\s+", "", stripped)
+        cleaned = re.sub(r"^\d+[.)]\s*", "", cleaned)
+        if cleaned:
+            values.append(_clip_line(cleaned))
+        if len(values) >= 8:
+            break
+    return values
 
 
 def _command_from_event(event: dict | None) -> str | None:
