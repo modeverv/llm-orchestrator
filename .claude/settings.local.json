@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python -m py_compile cli.py discord_bot.py fyws/*.py fyws/workers/*.py)",
       "Bash(python -m pytest -q)",
-      "Bash(python -m py_compile fyws/gateway.py discord_bot.py)"
+      "Bash(python -m py_compile fyws/gateway.py discord_bot.py)",
+      "Bash(python -m pytest -q --collect-only)"
     ]
   }
 }

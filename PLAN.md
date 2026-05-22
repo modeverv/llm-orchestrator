@@ -314,3 +314,66 @@ Geminiトークン切れ検知
 - `python cli.py inspect <job-id>` を追加し、jobs行、artifacts有無/サイズ、human gate、job_events、summary/diff/last_messageを1画面に出す。
 - `discord_bot.py log <job-id>` / live `log <job-id>` は `summary.md` がなければ `events.jsonl`、それもなければ `last_message.txt` を返す。
 - READMEに実Discord接続手順、polling fallbackとMessage Content Intentの切り替え、最小systemd/launchd例を追加した。
+
+---
+
+## P3: 品質・技術的負債
+
+### P3-A: summarizer 実装（最優先）
+
+現状の `summarize()` は 10 セクション中 3 つしか埋めない実質スタブ。
+`summarize_with_gemini()` は定義されているが **どこからも呼ばれていない**（デッドコード）。
+summary が空だと evaluator の失敗分析も context 引き継ぎも機能しない。
+
+- [ ] `summarize()` に `files_changed` 引数を追加し、`git_status_paths()` の差分から `## Files Changed` を埋める
+- [ ] `events.jsonl` を読んでコマンド行を `## Commands Run` に反映する
+- [ ] `result.last_message` から `## Decisions Made` と `## Next Action` を抽出して埋める
+- [ ] `verifier` の出力（`verify_outputs`）を `run_job()` から `summarize()` に渡し `## Verification` に反映する
+- [ ] gate reason がある場合に `## Blockers` を埋める
+- [ ] `summarize_with_gemini()` を `run_job()` の完了時に呼ぶか、上記で LLM 不要になったら削除する
+
+### P3-B: token limit 自動ハンドリング
+
+`token_limit_detected()` が定義されているが `run_job()` から呼ばれていない。
+トークン枯渇時に中途半端な成功扱いになっている。
+
+- [ ] `run_job()` の result 取得直後に `token_limit_detected(result.last_message)` を呼ぶ
+- [ ] 検知時は human_gate を開いて「トークン上限に達しました。新セッションで続行しますか？」と通知する
+- [ ] （発展）自動で新 job を作り summary を context として引き継ぐ auto-continue を実装する
+
+### P3-C: verifier のテスト追加
+
+`fyws/verifier.py` は P1 で追加された新モジュールだがテストファイルがない。
+
+- [ ] `tests/test_verifier.py` を作成し、`parse_verify_commands()` と `run_verify()` をテストする
+  - ACCEPTANCE.md のパースパターン（コードブロック形式・箇条書き形式）
+  - コマンド成功時（全て True）、最初の失敗で早期リターン
+  - ACCEPTANCE.md が存在しない場合は `(True, [])` を返す
+
+### P3-D: `dispatch_next()` の整理
+
+`fyws/orchestrator.py` の `dispatch_next()` は lock-aware でないシングルジョブ版で、
+runner の `_runnable_job_ids()` と役割が重複している。
+
+- [ ] CLI から `dispatch_next()` が実際に呼ばれているか確認する
+- [ ] 呼ばれていなければ削除、または `run_once()` に統一する
+
+### P3-E: ARTIFACTS_DIR の設定可能化
+
+`orchestrator.py` と `evaluator.py` の `ARTIFACTS_DIR` がソースコード相対にハードコードされている。
+DB ファイルの場所を変えると不整合が起きる。
+
+- [ ] `FYWS_ARTIFACTS_DIR` 環境変数で上書きできるようにする（デフォルトは現在と同じ）
+- [ ] `db_path` と同じディレクトリ配下の `artifacts/` をデフォルトにする案も検討する
+
+### P3-F: artifact の自動整理
+
+`artifacts/<job-id>/` が永続的に蓄積され、長期運用で肥大化する。
+
+- [ ] `python cli.py artifacts prune --keep-days N` コマンドを追加する
+  - succeeded/failed かつ `N` 日以上前の job の artifacts を削除対象にする
+  - `--dry-run` で削除対象を表示するだけにするオプションも付ける
+
+### P3-G: memo.txt の後片付け
+
+- [ ] `memo.txt` を `.gitignore` に追加するか削除する（作業中の手書きメモがリポジトリに残っている）
