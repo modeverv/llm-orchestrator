@@ -63,7 +63,12 @@ class CodexWorker:
             stdout = _as_text(exc.stdout)
             stderr = _as_text(exc.stderr)
             output = stdout + ("\n" if stdout and stderr else "") + stderr
-            events_path.write_text(output + json.dumps({"event_type": "error", "message": f"codex timed out after {timeout_seconds:g}s"}) + "\n", encoding="utf-8")
+            output = _events_with_commands(output)
+            separator = "\n" if output and not output.endswith("\n") else ""
+            events_path.write_text(
+                output + separator + json.dumps({"event_type": "error", "message": f"codex timed out after {timeout_seconds:g}s"}) + "\n",
+                encoding="utf-8",
+            )
             last_message = _last_message(last_path, output)
             last_path.write_text(last_message, encoding="utf-8")
             return WorkerResult(False, last_message, str(events_path), step_count=len(output.splitlines()), error=f"codex timed out after {timeout_seconds:g}s")
@@ -71,6 +76,7 @@ class CodexWorker:
         output = stdout
         if stderr:
             output = output + ("\n" if output else "") + stderr
+        output = _events_with_commands(output)
         events_path.write_text(output, encoding="utf-8")
         last_message = _last_message(last_path, output)
         last_path.write_text(last_message, encoding="utf-8")
@@ -131,6 +137,68 @@ def _parse_json_line(line: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return value if isinstance(value, dict) else None
+
+
+def _events_with_commands(output: str) -> str:
+    lines: list[str] = []
+    for raw in output.splitlines():
+        lines.append(raw)
+        parsed = _parse_json_line(raw.strip())
+        command = _extract_command(parsed) if parsed is not None else None
+        if command:
+            lines.append(json.dumps({"event_type": "command", "command": command}, ensure_ascii=False))
+    if output.endswith("\n"):
+        return "\n".join(lines) + "\n"
+    return "\n".join(lines)
+
+
+def _extract_command(event: dict | None) -> str | None:
+    if not event:
+        return None
+    direct = _command_from_mapping(event)
+    if direct:
+        return direct
+    for call in _iter_tool_calls(event):
+        command = _command_from_mapping(call)
+        if command:
+            return command
+        tool_input = call.get("input") or call.get("args") or call.get("arguments") or {}
+        if isinstance(tool_input, str):
+            parsed_input = _parse_json_line(tool_input)
+            tool_input = parsed_input if parsed_input is not None else {"command": tool_input}
+        if isinstance(tool_input, dict):
+            command = _command_from_mapping(tool_input)
+            if command:
+                return command
+    return None
+
+
+def _iter_tool_calls(value, depth: int = 0, max_depth: int = 5):
+    if depth > max_depth:
+        return
+    if isinstance(value, dict):
+        if value.get("type") in {"tool_call", "tool_use"}:
+            yield value
+        for key in ("tool_call", "toolCall", "tool_use", "toolUse", "function_call", "functionCall"):
+            call = value.get(key)
+            if isinstance(call, dict):
+                yield call
+        for nested in value.values():
+            yield from _iter_tool_calls(nested, depth + 1, max_depth)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _iter_tool_calls(item, depth + 1, max_depth)
+
+
+def _command_from_mapping(value: dict) -> str:
+    for key in ("command", "cmd", "shell_command"):
+        raw = value.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    argv = value.get("argv")
+    if isinstance(argv, list) and argv:
+        return " ".join(str(part) for part in argv)
+    return ""
 
 
 def _extract_message(event: dict) -> str:

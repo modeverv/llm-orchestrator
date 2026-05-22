@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import selectors
 import signal
 import subprocess
@@ -188,7 +187,9 @@ def _extract_command(event: dict) -> str:
     return _command_from_text(message)
 
 
-def _iter_tool_calls(value):
+def _iter_tool_calls(value, depth: int = 0, max_depth: int = 5):
+    if depth > max_depth:
+        return
     if isinstance(value, dict):
         if any(key in value for key in ("functionCall", "function_call", "tool_call")):
             for key in ("functionCall", "function_call", "tool_call"):
@@ -201,10 +202,10 @@ def _iter_tool_calls(value):
                 if isinstance(call, dict):
                     yield call
         for nested in value.values():
-            yield from _iter_tool_calls(nested)
+            yield from _iter_tool_calls(nested, depth + 1, max_depth)
     elif isinstance(value, list):
         for item in value:
-            yield from _iter_tool_calls(item)
+            yield from _iter_tool_calls(item, depth + 1, max_depth)
 
 
 def _command_from_mapping(value: dict) -> str:
@@ -223,9 +224,6 @@ def _command_from_text(text: str) -> str:
         stripped = raw.strip()
         if stripped.startswith("$ "):
             return stripped[2:].strip()
-        match = re.match(r"^(?:run|exec|shell|bash|command):\s*(.+)$", stripped, flags=re.IGNORECASE)
-        if match:
-            return match.group(1).strip()
     return ""
 
 

@@ -30,6 +30,26 @@ printf '%s\\n' done
     assert result.tokens_out == 3
 
 
+def test_claude_worker_records_tool_use_commands(tmp_path):
+    prompt = tmp_path / "task.md"
+    prompt.write_text("do it", encoding="utf-8")
+    artifact = tmp_path / "artifacts"
+    executable = tmp_path / "fake-claude"
+    executable.write_text(
+        """#!/bin/sh
+cat > /dev/null
+printf '%s\\n' '{"type":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"pytest -q"}}]}'
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+    result = ClaudeWorker(str(executable)).run(prompt, tmp_path, artifact, [])
+
+    assert result.success
+    assert '{"event_type": "command", "command": "pytest -q"}' in (artifact / "events.jsonl").read_text(encoding="utf-8")
+
+
 def test_claude_worker_times_out_and_writes_error(tmp_path):
     prompt = tmp_path / "task.md"
     prompt.write_text("do it", encoding="utf-8")

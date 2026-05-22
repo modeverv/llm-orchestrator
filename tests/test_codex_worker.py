@@ -45,6 +45,36 @@ printf '%s\\n' '{{"msg":"event"}}'
     assert stdin_path.read_text(encoding="utf-8") == "do it"
 
 
+def test_codex_worker_records_json_command_events(tmp_path):
+    prompt = tmp_path / "task.md"
+    prompt.write_text("do it", encoding="utf-8")
+    artifact = tmp_path / "artifacts"
+    executable = tmp_path / "fake-codex"
+    executable.write_text(
+        """#!/bin/sh
+while [ "$1" ]; do
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    mkdir -p "$(dirname "$1")"
+    printf '%s' done > "$1"
+  fi
+  shift
+done
+cat > /dev/null
+printf '%s\\n' '{"type":"tool_call","input":{"cmd":"python -m pytest -q"}}'
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+    result = CodexWorker(str(executable)).run(prompt, tmp_path, artifact, [])
+
+    assert result.success
+    assert '{"event_type": "command", "command": "python -m pytest -q"}' in (artifact / "events.jsonl").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_codex_worker_reports_missing_executable(tmp_path):
     prompt = tmp_path / "task.md"
     prompt.write_text("do it", encoding="utf-8")

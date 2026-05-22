@@ -98,6 +98,11 @@ def _record_line(events, line: str, last_message: str, tokens_in: int | None, to
     step_count += 1
     if line.strip():
         last_message = line.strip()
+    parsed = _parse_json_line(line)
+    command = _extract_command(parsed) if parsed is not None else None
+    if command:
+        events.write(json.dumps({"event_type": "command", "command": command}, ensure_ascii=False) + "\n")
+        events.flush()
     tokens_in, tokens_out = _extract_usage(line, tokens_in, tokens_out)
     return last_message, tokens_in, tokens_out, step_count
 
@@ -125,6 +130,59 @@ def _parse_json_line(line: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return value if isinstance(value, dict) else None
+
+
+def _extract_command(event: dict | None) -> str | None:
+    if not event:
+        return None
+    direct = _command_from_mapping(event)
+    if direct:
+        return direct
+    for call in _iter_tool_calls(event):
+        command = _command_from_mapping(call)
+        if command:
+            return command
+        tool_input = call.get("input") or call.get("args") or call.get("arguments") or {}
+        if isinstance(tool_input, str):
+            parsed_input = _parse_json_line(tool_input)
+            tool_input = parsed_input if parsed_input is not None else {"command": tool_input}
+        if isinstance(tool_input, dict):
+            command = _command_from_mapping(tool_input)
+            if command:
+                return command
+    return None
+
+
+def _iter_tool_calls(value, depth: int = 0, max_depth: int = 5):
+    if depth > max_depth:
+        return
+    if isinstance(value, dict):
+        if value.get("type") == "tool_use":
+            yield value
+        for key in ("tool_use", "toolUse", "tool_call", "toolCall", "function_call", "functionCall"):
+            call = value.get(key)
+            if isinstance(call, dict):
+                yield call
+        content = value.get("content")
+        if isinstance(content, list):
+            for item in content:
+                yield from _iter_tool_calls(item, depth + 1, max_depth)
+        for nested in value.values():
+            yield from _iter_tool_calls(nested, depth + 1, max_depth)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _iter_tool_calls(item, depth + 1, max_depth)
+
+
+def _command_from_mapping(value: dict) -> str:
+    for key in ("command", "cmd", "shell_command"):
+        raw = value.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    argv = value.get("argv")
+    if isinstance(argv, list) and argv:
+        return " ".join(str(part) for part in argv)
+    return ""
 
 
 def _first_int(source: dict, keys: list[str], fallback: int | None) -> int | None:
