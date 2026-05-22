@@ -53,12 +53,13 @@ def queue_job(
     safe_score = compute_safe(c_score, o_score, i_score)
     forced_gate_reason = acceptance.requires_forced_human_gate(mode, task_text)
     with connect(db_path) as conn:
+        prompt_template_id = evaluator.select_active_template(conn, project)
         cur = conn.execute(
             """
             INSERT INTO jobs(
                 project, prompt_path, cwd, mode, worker, status, safe_score,
-                c_score, o_score, i_score, ownership_paths
-            ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+                c_score, o_score, i_score, ownership_paths, prompt_template_id
+            ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)
             """,
             (
                 project,
@@ -71,6 +72,7 @@ def queue_job(
                 o_score,
                 i_score,
                 json.dumps(ownership_paths),
+                prompt_template_id,
             ),
         )
         job_id = int(cur.lastrowid)

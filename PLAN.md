@@ -290,9 +290,14 @@ Geminiトークン切れ検知
 
 ### P2: evaluator/prompt改善
 
-- [ ] `propose_improvement()` を固定文のdraft生成ではなく、実metricsと失敗summaryを入力にしたLLM提案へ拡張する
-- [ ] prompt_templateのactive versionをjob作成時に自動選択する
-- [ ] template approve時に古いactiveをdeprecatedへ落とす挙動の統合テストを増やす
+- [x] `propose_improvement()` を固定文のdraft生成ではなく、実metricsと失敗summaryを入力にしたLLM提案へ拡張する
+- [x] prompt_templateのactive versionをjob作成時に自動選択する
+- [x] template approve時に古いactiveをdeprecatedへ落とす挙動の統合テストを増やす
+
+2026-05-22 P2実装:
+- `propose_improvement()` は `job_metrics` と失敗jobの `summary.md` をLLM入力にして、返却された本文を次versionの `draft` として保存する。テストではproposer callableを差し替え、実CLIではGemini CLIを呼ぶ。
+- job作成時にproject名のactive templateを優先し、なければ `default` のactive templateを自動選択して `jobs.prompt_template_id` に記録する。
+- template approve時は同名の旧activeのみを `deprecated` に落とし、別名templateのactiveは維持する統合テストを追加した。
 
 ### P2: 運用UX
 

@@ -104,6 +104,34 @@ def test_secret_operation_opens_gate_even_when_safe_is_high(tmp_path):
     assert gate_row["reason"] == "secret_operation_requires_human"
 
 
+def test_queue_job_selects_active_project_template_then_default(tmp_path):
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    with connect(db) as conn:
+        default_id = conn.execute(
+            "INSERT INTO prompt_templates(name, version, status, body) VALUES ('default', 1, 'active', 'default')"
+        ).lastrowid
+        project_id = conn.execute(
+            "INSERT INTO prompt_templates(name, version, status, body) VALUES ('p', 1, 'active', 'project')"
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO prompt_templates(name, version, status, body) VALUES ('p', 2, 'draft', 'draft')"
+        )
+
+    p_job = queue_job("p", task, tmp_path, db_path=db)
+    other_job = queue_job("other", task, tmp_path, db_path=db)
+
+    with connect(db) as conn:
+        selected = {
+            row["id"]: row["prompt_template_id"]
+            for row in conn.execute("SELECT id, prompt_template_id FROM jobs WHERE id IN (?, ?)", (p_job, other_job))
+        }
+    assert selected[p_job] == project_id
+    assert selected[other_job] == default_id
+
+
 def test_run_job_with_fake_worker_succeeds(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
     db = tmp_path / "jobs.sqlite3"
