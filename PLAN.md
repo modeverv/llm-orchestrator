@@ -415,9 +415,9 @@ def job_log_text(job_id: int) -> str:
 
 対処方針を決めて実装またはドキュメント化する（いずれか選択）:
 
-- [ ] **A案（ドキュメント化のみ）**: README / ARCHITECTURE.md に「worker が構造化コマンドイベントを出さない場合、Commands Run は空になる」と明記する
-- [ ] **B案（Worker 側で構造化イベントを追加）**: GeminiWorker が LLM 出力からツール呼び出し行を検出したとき `{"event_type": "command", "command": "..."}` を events.jsonl に追記する
-- [ ] **C案（セクション名を変更）**: `Commands Run` を `Worker Events` に改名し、events.jsonl の行数・種別サマリを記録する形に切り替える
+- [x] <不採用>**A案（ドキュメント化のみ）**: README / ARCHITECTURE.md に「worker が構造化コマンドイベントを出さない場合、Commands Run は空になる」と明記する
+- [ ] <採用>**B案（Worker 側で構造化イベントを追加）**: GeminiWorker が LLM 出力からツール呼び出し行を検出したとき `{"event_type": "command", "command": "..."}` を events.jsonl に追記する
+- [x] <不採用>**C案（セクション名を変更）**: `Commands Run` を `Worker Events` に改名し、events.jsonl の行数・種別サマリを記録する形に切り替える
 
 ### P4-C: `Non-Negotiable Rules` セクションのハードコード
 
