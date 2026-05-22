@@ -153,25 +153,35 @@ def _extract_command(event: dict | None) -> str | None:
     return None
 
 
-def _iter_tool_calls(value, depth: int = 0, max_depth: int = 5):
+def _iter_tool_calls(value, depth: int = 0, max_depth: int = 5, seen: set[int] | None = None):
+    if seen is None:
+        seen = set()
     if depth > max_depth:
         return
     if isinstance(value, dict):
+        handled_keys: set[str] = set()
         if value.get("type") == "tool_use":
+            seen.add(id(value))
             yield value
         for key in ("tool_use", "toolUse", "tool_call", "toolCall", "function_call", "functionCall"):
             call = value.get(key)
             if isinstance(call, dict):
-                yield call
+                handled_keys.add(key)
+                call_id = id(call)
+                if call_id not in seen:
+                    seen.add(call_id)
+                    yield call
         content = value.get("content")
         if isinstance(content, list):
             for item in content:
-                yield from _iter_tool_calls(item, depth + 1, max_depth)
-        for nested in value.values():
-            yield from _iter_tool_calls(nested, depth + 1, max_depth)
+                yield from _iter_tool_calls(item, depth + 1, max_depth, seen)
+        for key, nested in value.items():
+            if key in handled_keys:
+                continue
+            yield from _iter_tool_calls(nested, depth + 1, max_depth, seen)
     elif isinstance(value, list):
         for item in value:
-            yield from _iter_tool_calls(item, depth + 1, max_depth)
+            yield from _iter_tool_calls(item, depth + 1, max_depth, seen)
 
 
 def _command_from_mapping(value: dict) -> str:

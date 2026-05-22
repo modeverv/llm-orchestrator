@@ -525,3 +525,58 @@ Claude CLI の `--print` 出力に含まれる tool_use ブロックと、Codex 
 
 - [x] `_iter_tool_calls(value, depth=0, max_depth=5)` のように深さ上限を追加する
 - [x] 深さ超過時はそれ以上の走査を打ち切る
+
+---
+
+## P6: 次の改善候補
+
+### P6-A: cross-worker の挙動一致テストがない
+
+`tests/test_worker.py` は `gemini.py` からインポートした `_extract_command()` /
+`_iter_tool_calls()` だけをテストしている。`claude.py` と `codex.py` の実装が
+同じインプットで同じ結果を返すかを検証するテストがない。
+3 worker に同じロジックを独立実装しているため、片方にバグ修正を入れても
+他 2 つへの反映漏れを検知できない。
+
+```python
+# 追加したいテストのイメージ
+@pytest.mark.parametrize("extract_fn", [
+    gemini._extract_command,
+    claude._extract_command,
+    codex._extract_command,
+])
+def test_all_workers_extract_bash_command(extract_fn):
+    event = {"type": "tool_use", "input": {"command": "pytest -q"}}
+    assert extract_fn(event) == "pytest -q"
+```
+
+- [x] `tests/test_worker.py` に `@pytest.mark.parametrize` で 3 worker の
+  `_extract_command()` を同一インプットで比較するテストを追加する
+  - `{"type": "tool_use", "input": {"command": "..."}}` 形式（Claude 形式）
+  - `{"functionCall": {"args": {"command": "..."}}}` 形式（Gemini 形式）
+  - `{"tool_call": {"command": "..."}}` 形式（Codex 形式）
+  - コマンドを含まないイベントに対して全 worker が `None` または `""` を返すこと
+
+### P6-B: ClaudeWorker の `_iter_tool_calls()` が二重 yield する経路がある
+
+`fyws/workers/claude.py` の `_iter_tool_calls()` は、特定キー（`"tool_use"` 等）で
+一度 yield した後、`for nested in value.values()` の再帰でも同じオブジェクトを
+再走査するため、同一の call オブジェクトが複数回 yield される経路がある。
+
+```python
+for key in ("tool_use", "toolUse", ...):
+    call = value.get(key)
+    if isinstance(call, dict):
+        yield call            # ← ここで yield
+...
+for nested in value.values():
+    yield from _iter_tool_calls(nested, ...)  # ← 同じオブジェクトをまた走査
+```
+
+`_extract_command()` は最初にマッチした結果を即 return するため現状は実害ゼロだが、
+将来 caller がすべての yield 結果を収集するように変わると重複が問題になる。
+
+- [x] 特定キーで yield したオブジェクトの id を `seen` セットに記録し、
+  `value.values()` の再帰ループで重複をスキップする
+- [x] 修正後に `{"tool_use": {"input": {"command": "ls"}}}` を入力として
+  yield 回数が 1 回であることをテストで確認する

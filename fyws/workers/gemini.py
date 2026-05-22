@@ -191,8 +191,10 @@ def _iter_tool_calls(value, depth: int = 0, max_depth: int = 5):
     if depth > max_depth:
         return
     if isinstance(value, dict):
-        if any(key in value for key in ("functionCall", "function_call", "tool_call")):
-            for key in ("functionCall", "function_call", "tool_call"):
+        if value.get("type") in {"tool_call", "tool_use"}:
+            yield value
+        if any(key in value for key in ("functionCall", "function_call", "tool_call", "toolCall", "tool_use", "toolUse")):
+            for key in ("functionCall", "function_call", "tool_call", "toolCall", "tool_use", "toolUse"):
                 call = value.get(key)
                 if isinstance(call, dict):
                     yield call
