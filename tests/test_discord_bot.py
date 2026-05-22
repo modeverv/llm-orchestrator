@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from discord_bot import handle_message
 from fyws.db import connect
+from fyws import orchestrator
 
 
 def test_handle_message_queues_project_job(tmp_path):
@@ -28,3 +29,12 @@ def test_handle_message_queues_worker_prefixed_job(tmp_path):
 
 def test_handle_message_status_empty(tmp_path):
     assert handle_message("status", str(tmp_path), str(tmp_path / "jobs.sqlite3")) == "no jobs"
+
+
+def test_handle_message_log_falls_back_when_summary_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    artifact = orchestrator.ARTIFACTS_DIR / "3"
+    artifact.mkdir(parents=True)
+    (artifact / "last_message.txt").write_text("worker output", encoding="utf-8")
+
+    assert handle_message("log 3", str(tmp_path), str(tmp_path / "jobs.sqlite3")) == "worker output"

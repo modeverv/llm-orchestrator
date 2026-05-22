@@ -160,12 +160,27 @@ def format_completion(job_id: int, project: str, status: str) -> str:
 
 def list_projects(work_root: str | Path = DEFAULT_WORK_ROOT, db_path=None) -> list[dict]:
     root = Path(work_root).expanduser().resolve()
-    dirs = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.exists() else []
+    dirs = {p.name for p in root.iterdir() if p.is_dir()} if root.exists() else set()
     stats: dict[str, dict] = {}
     if db_path is not None:
         for row in project_list(db_path):
             stats[row["project"]] = row
-    return [{"project": name, **stats.get(name, {})} for name in dirs]
+    projects = []
+    for name in sorted(dirs | set(stats)):
+        row = {
+            "project": name,
+            "total": 0,
+            "queued": 0,
+            "running": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "waiting_human": 0,
+            "last_updated": None,
+            "path": str(root / name) if name in dirs else None,
+        }
+        row.update(stats.get(name, {}))
+        projects.append(row)
+    return projects
 
 
 def format_projects(projects: list[dict]) -> str:
@@ -173,19 +188,39 @@ def format_projects(projects: list[dict]) -> str:
         return "no projects"
     lines = []
     for p in projects:
-        if "total" not in p:
-            lines.append(p["project"])
-            continue
-        parts = [p["project"]]
+        parts = [p["project"], f"total={p.get('total', 0)}"]
         if p.get("running"):
             parts.append(f"running={p['running']}")
         if p.get("queued"):
             parts.append(f"queued={p['queued']}")
         if p.get("waiting_human"):
             parts.append(f"waiting={p['waiting_human']}")
-        parts.append(f"done={p['succeeded']}✓ {p['failed']}✗")
+        parts.append(f"done={p.get('succeeded', 0)}✓ {p.get('failed', 0)}✗")
+        if p.get("last_updated"):
+            parts.append(f"updated={p['last_updated']}")
         lines.append("  ".join(parts))
     return "\n".join(lines)
+
+
+def split_discord_messages(text: str, limit: int = 2000) -> list[str]:
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    if text == "":
+        return []
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        split_at = remaining.rfind("\n", 0, limit + 1)
+        if split_at <= 0:
+            split_at = limit
+        chunk = remaining[:split_at]
+        chunks.append(chunk)
+        remaining = remaining[split_at:]
+        if remaining.startswith("\n"):
+            remaining = remaining[1:]
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 def queue_from_message(

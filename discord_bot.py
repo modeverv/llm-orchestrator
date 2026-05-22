@@ -88,9 +88,7 @@ def main() -> int:
         return 0
     if message.startswith("log "):
         job_id = int(message.split(maxsplit=1)[1].lstrip("#"))
-        summary = orchestrator.ARTIFACTS_DIR / str(job_id) / "summary.md"
-        if summary.exists():
-            print(summary.read_text(encoding="utf-8"))
+        print(orchestrator.job_log_text(job_id), end="")
         return 0
 
     queued = gateway.queue_from_message(message, args.work_root, db_path=args.db)
@@ -166,7 +164,7 @@ def serve_discord(
         notify_channel["value"] = message.channel
         response = handle_message(message.content, work_root, db_path)
         if response:
-            await message.channel.send(response)
+            await send_discord_response(message.channel, response)
 
     client.run(token)
     return 0
@@ -202,7 +200,7 @@ async def _message_poll_loop(
                 continue
             response = handle_message(message.content, work_root, db_path)
             if response:
-                await channel.send(response)
+                await send_discord_response(channel, response)
         await asyncio.sleep(interval)
 
 
@@ -226,8 +224,7 @@ def handle_message(message: str, work_root: str, db_path: str) -> str:
         return f"queued #{job_id.lstrip('#')}"
     if text.startswith("log "):
         job_id = int(text.split(maxsplit=1)[1].lstrip("#"))
-        summary = orchestrator.ARTIFACTS_DIR / str(job_id) / "summary.md"
-        return summary.read_text(encoding="utf-8") if summary.exists() else f"summary for #{job_id} not found"
+        return orchestrator.job_log_text(job_id)
     if ":" in text:
         queued = gateway.queue_from_message(text, work_root, db_path=db_path)
         return gateway.format_queued(queued)
@@ -266,8 +263,13 @@ async def _runner_loop(
             channel = client.get_channel(channel_id)
         if channel is not None:
             for notification in notifications:
-                await channel.send(notification)
+                await send_discord_response(channel, notification)
         await asyncio.sleep(interval)
+
+
+async def send_discord_response(channel, text: str) -> None:
+    for chunk in gateway.split_discord_messages(text):
+        await channel.send(chunk)
 
 
 def format_job_notification(job_id: int, project: str, status: str, db_path: str) -> str:

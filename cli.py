@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fyws import evaluator, gate, orchestrator, runner
 from fyws.db import DEFAULT_DB_PATH, connect, init_db
+from fyws import gateway
 from fyws.gateway import DEFAULT_WORK_ROOT
 
 
@@ -53,6 +54,8 @@ def main() -> int:
     sub.add_parser("status")
     log = sub.add_parser("log")
     log.add_argument("job_id", type=int)
+    inspect = sub.add_parser("inspect")
+    inspect.add_argument("job_id", type=int)
     retry = sub.add_parser("retry")
     retry.add_argument("job_id", type=int)
 
@@ -69,7 +72,8 @@ def main() -> int:
 
     project = sub.add_parser("project")
     project_sub = project.add_subparsers(dest="project_command", required=True)
-    project_sub.add_parser("list")
+    project_list = project_sub.add_parser("list")
+    project_list.add_argument("--work-root", default=DEFAULT_WORK_ROOT)
     project_create = project_sub.add_parser("create")
     project_create.add_argument("name")
     project_create.add_argument("--work-root", default=DEFAULT_WORK_ROOT)
@@ -100,6 +104,9 @@ def main() -> int:
     if args.command == "log":
         for line in orchestrator.log_lines(args.job_id):
             print(line)
+        return 0
+    if args.command == "inspect":
+        print(orchestrator.inspect_job(args.job_id, db_path), end="")
         return 0
     if args.command == "retry":
         print(orchestrator.retry_job(args.job_id, db_path=db_path))
@@ -213,22 +220,11 @@ def _status(db_path: Path) -> int:
 
 def _project(args, db_path: Path) -> int:
     if args.project_command == "list":
-        projects = orchestrator.project_list(db_path)
+        projects = gateway.list_projects(args.work_root, db_path)
         if not projects:
             print("no projects")
             return 0
-        for proj in projects:
-            parts = [
-                f"{proj['project']}",
-                f"total={proj['total']}",
-                f"queued={proj['queued']}",
-                f"running={proj['running']}",
-                f"succeeded={proj['succeeded']}",
-                f"failed={proj['failed']}",
-                f"waiting={proj['waiting_human']}",
-                f"updated={proj['last_updated']}",
-            ]
-            print("  ".join(parts))
+        print(gateway.format_projects(projects))
         return 0
     if args.project_command == "create":
         from fyws.gateway import create_project

@@ -336,6 +336,83 @@ def log_lines(job_id: int) -> list[str]:
     return path.read_text(encoding="utf-8", errors="replace").splitlines()
 
 
+def job_log_text(job_id: int) -> str:
+    artifact = ARTIFACTS_DIR / str(job_id)
+    for name in ("summary.md", "events.jsonl", "last_message.txt"):
+        path = artifact / name
+        if path.exists():
+            return path.read_text(encoding="utf-8", errors="replace")
+    return f"log for #{job_id} not found"
+
+
+def inspect_job(job_id: int, db_path: str | Path = DEFAULT_DB_PATH) -> str:
+    init_db(db_path)
+    with connect(db_path) as conn:
+        job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise ValueError(f"job {job_id} not found")
+        gates = conn.execute(
+            """
+            SELECT reason, question, answer, status, created_at, answered_at
+            FROM human_requests
+            WHERE job_id = ?
+            ORDER BY created_at
+            """,
+            (job_id,),
+        ).fetchall()
+        events = conn.execute(
+            """
+            SELECT event_type, message, payload, created_at
+            FROM job_events
+            WHERE job_id = ?
+            ORDER BY id
+            """,
+            (job_id,),
+        ).fetchall()
+
+    artifact = ARTIFACTS_DIR / str(job_id)
+    lines = [
+        f"# Job {job_id}",
+        "",
+        "## DB",
+        f"project: {job['project']}",
+        f"status: {job['status']}",
+        f"worker: {job['worker']}",
+        f"cwd: {job['cwd']}",
+        f"mode: {job['mode']}",
+        f"safe_score: {job['safe_score']:.3f}",
+        f"attempts: {job['attempts']}",
+        f"last_error: {job['last_error'] or ''}",
+        "",
+        "## Artifacts",
+    ]
+    for name in ("prompt.md", "context.md", "events.jsonl", "last_message.txt", "summary.md", "diff.patch"):
+        path = artifact / name
+        state = f"{path.stat().st_size} bytes" if path.exists() else "missing"
+        lines.append(f"- {name}: {state}")
+
+    lines.extend(["", "## Gate"])
+    if gates:
+        for row in gates:
+            answer = f" answer={row['answer']}" if row["answer"] else ""
+            lines.append(f"- {row['status']} {row['reason']} created={row['created_at']}{answer}")
+            lines.append(f"  question: {row['question']}")
+    else:
+        lines.append("none")
+
+    lines.extend(["", "## Job Events"])
+    if events:
+        for row in events:
+            lines.append(f"- {row['created_at']} {row['event_type']}: {row['message']}")
+    else:
+        lines.append("none")
+
+    _append_inspect_file(lines, "Summary", artifact / "summary.md")
+    _append_inspect_file(lines, "Diff", artifact / "diff.patch")
+    _append_inspect_file(lines, "Last Message", artifact / "last_message.txt")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def dry_run_check(
     project: str,
     cwd: str | Path,
@@ -392,6 +469,17 @@ def _clear_artifacts(artifact_dir: Path) -> None:
         path = artifact_dir / name
         if path.exists():
             path.unlink()
+
+
+def _append_inspect_file(lines: list[str], title: str, path: Path, limit: int = 12000) -> None:
+    lines.extend(["", f"## {title}"])
+    if not path.exists():
+        lines.append("missing")
+        return
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if len(text) > limit:
+        text = text[:limit] + "\n...[truncated]"
+    lines.append(text.rstrip() or "(empty)")
 
 
 def _event(conn, job_id: int, event_type: str, message: str, payload: dict | None = None) -> None:

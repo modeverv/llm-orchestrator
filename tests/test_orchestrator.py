@@ -309,6 +309,41 @@ def test_route_worker_supports_codex():
     assert orchestrator.route_worker("codex").__class__.__name__ == "CodexWorker"
 
 
+def test_inspect_job_shows_db_artifacts_summary_diff_and_gate(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    job_id = queue_job("p", task, tmp_path, c_score=0.1, o_score=0.5, i_score=0.5, db_path=db)
+    artifact = orchestrator.ARTIFACTS_DIR / str(job_id)
+    artifact.mkdir(parents=True)
+    (artifact / "summary.md").write_text("# Job Summary\n\n## Current State\nwaiting", encoding="utf-8")
+    (artifact / "diff.patch").write_text("diff --git a/x b/x\n", encoding="utf-8")
+
+    report = orchestrator.inspect_job(job_id, db)
+
+    assert "# Job 1" in report
+    assert "status: waiting_human" in report
+    assert "safe_score: 0.025" in report
+    assert "summary.md" in report
+    assert "## Gate" in report
+    assert "safe_below_threshold" in report
+    assert "diff --git a/x b/x" in report
+
+
+def test_job_log_text_falls_back_to_events_then_last_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    artifact = orchestrator.ARTIFACTS_DIR / "9"
+    artifact.mkdir(parents=True)
+    (artifact / "events.jsonl").write_text('{"message":"event"}\n', encoding="utf-8")
+    (artifact / "last_message.txt").write_text("last", encoding="utf-8")
+
+    assert orchestrator.job_log_text(9) == '{"message":"event"}\n'
+    (artifact / "events.jsonl").unlink()
+    assert orchestrator.job_log_text(9) == "last"
+
+
 def test_dot_ownership_allows_any_changed_path(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
     db = tmp_path / "jobs.sqlite3"

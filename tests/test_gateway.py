@@ -9,9 +9,12 @@ from fyws.db import connect
 from fyws.gateway import (
     discover_ownership_paths,
     format_gate,
+    format_projects,
     format_queued,
+    list_projects,
     parse_project_message,
     queue_from_message,
+    split_discord_messages,
 )
 
 
@@ -214,3 +217,26 @@ def test_discord_helper_handles_parallel_process_db_init(tmp_path):
 
 def test_format_gate_message():
     assert format_gate(7, "clientA", "needs_review", "OK?") == "clientA #7 human_gate [needs_review]\nOK?"
+
+
+def test_list_projects_includes_fs_projects_without_jobs(tmp_path):
+    (tmp_path / "no-jobs-yet").mkdir()
+    active = tmp_path / "active"
+    active.mkdir()
+    db = tmp_path / "jobs.sqlite3"
+    (active / "task.md").write_text("do it", encoding="utf-8")
+    queue_from_message("active: do it", work_root=tmp_path, db_path=db)
+
+    projects = list_projects(tmp_path, db)
+
+    assert [project["project"] for project in projects] == ["active", "no-jobs-yet"]
+    rendered = format_projects(projects)
+    assert "active  total=1" in rendered
+    assert "no-jobs-yet  total=0" in rendered
+
+
+def test_split_discord_messages_respects_limit():
+    messages = split_discord_messages("a" * 4500, limit=2000)
+
+    assert [len(message) for message in messages] == [2000, 2000, 500]
+    assert "".join(messages) == "a" * 4500

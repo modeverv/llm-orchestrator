@@ -302,8 +302,15 @@ Geminiトークン切れ検知
 ### P2: 運用UX
 
 - [x] `fyws project create/list` を追加して `~/work/001_work/by-llms/<project>` を管理する（Discord `projects` コマンドも対応済み）
-- [ ] `cli project list`（jobsテーブルベース）と Discord `projects`（FSベース）の表示を統一する（jobがないプロジェクトがCLI側に出ない不整合）
-- [ ] Discord応答の2000文字制限を処理する（長いsummaryや大量jobが無言で切れる）
-- [ ] `fyws inspect <job-id>` でDB状態、artifacts、summary、diff、gateをまとめて表示する
-- [ ] `discord_bot.py log <job-id>` がsummary未生成時にevents/last_messageへフォールバックする
-- [ ] READMEに実Discord接続手順と最小systemd/launchd運用例を書く
+- [x] `cli project list`（jobsテーブルベース）と Discord `projects`（FSベース）の表示を統一する（jobがないプロジェクトがCLI側に出ない不整合）
+- [x] Discord応答の2000文字制限を処理する（長いsummaryや大量jobが無言で切れる）
+- [x] `fyws inspect <job-id>` でDB状態、artifacts、summary、diff、gateをまとめて表示する
+- [x] `discord_bot.py log <job-id>` がsummary未生成時にevents/last_messageへフォールバックする
+- [x] READMEに実Discord接続手順と最小systemd/launchd運用例を書く
+
+2026-05-22 P2運用UX実装:
+- `gateway.list_projects()` をFSディレクトリとDB job統計の共通ソースにし、CLI `project list` とDiscord `projects` が同じ `format_projects()` 表示を使う。jobがまだないprojectは `total=0` として表示される。
+- Discord live送信は `split_discord_messages()` で2000文字以内に分割して送る。`status`、`projects`、長い `log`、完了通知のすべてが同じ送信経路を通る。
+- `python cli.py inspect <job-id>` を追加し、jobs行、artifacts有無/サイズ、human gate、job_events、summary/diff/last_messageを1画面に出す。
+- `discord_bot.py log <job-id>` / live `log <job-id>` は `summary.md` がなければ `events.jsonl`、それもなければ `last_message.txt` を返す。
+- READMEに実Discord接続手順、polling fallbackとMessage Content Intentの切り替え、最小systemd/launchd例を追加した。
