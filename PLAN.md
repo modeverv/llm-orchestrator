@@ -377,3 +377,91 @@ DB ファイルの場所を変えると不整合が起きる。
 ### P3-G: memo.txt の後片付け
 
 - [x] `memo.txt` を `.gitignore` に追加するか削除する（作業中の手書きメモがリポジトリに残っている）
+
+---
+
+## P4: 次の改善候補
+
+### P4-A: `log_lines()` / `job_log_text()` の db_path 非対応バグ（実バグ）
+
+`artifacts_dir_for_db(db_path)` が追加されたにもかかわらず、以下の2関数はモジュールレベルの
+`ARTIFACTS_DIR` を直接参照しており、非デフォルト DB パス使用時に artifacts を見つけられない。
+
+```python
+# orchestrator.py:373, 380
+def log_lines(job_id: int) -> list[str]:
+    path = ARTIFACTS_DIR / str(job_id) / "events.jsonl"   # ← 直参照（バグ）
+
+def job_log_text(job_id: int) -> str:
+    artifact = ARTIFACTS_DIR / str(job_id)                  # ← 直参照（バグ）
+```
+
+`inspect_job()` は `artifacts_dir_for_db(db_path)` を正しく使っているため、
+この2関数だけが取り残されている。`FYWS_ARTIFACTS_DIR` 未設定かつ非デフォルト DB パスを
+使う場合に CLI の `log` / `status` コマンドが空を返すバグになる。
+
+- [ ] `log_lines(job_id, db_path=DEFAULT_DB_PATH)` に `db_path` 引数を追加し `artifacts_dir_for_db(db_path)` を使うよう修正する
+- [ ] `job_log_text(job_id, db_path=DEFAULT_DB_PATH)` も同様に修正する
+- [ ] 呼び出し元（`cli.py`, `discord_bot.py`）に `db_path` を渡すよう合わせて修正する
+- [ ] テストを追加して非デフォルト DB パスで `job_log_text()` が正しいパスを参照することを確認する
+
+### P4-B: `_commands_from_events()` が実運用で空になる問題
+
+`summarize()` の `## Commands Run` セクションは `events.jsonl` から
+`{"command": "..."}` / `{"cmd": "..."}` / `{"argv": [...]}` キーを探すが、
+`GeminiWorker` / `ClaudeWorker` / `CodexWorker` はいずれも CLI の生 stdout を
+そのまま書き込む形式のため、このキーを含むイベントが存在しない。
+結果として `Commands Run` セクションは実運用でほぼ常に空になる。
+
+対処方針を決めて実装またはドキュメント化する（いずれか選択）:
+
+- [ ] **A案（ドキュメント化のみ）**: README / ARCHITECTURE.md に「worker が構造化コマンドイベントを出さない場合、Commands Run は空になる」と明記する
+- [ ] **B案（Worker 側で構造化イベントを追加）**: GeminiWorker が LLM 出力からツール呼び出し行を検出したとき `{"event_type": "command", "command": "..."}` を events.jsonl に追記する
+- [ ] **C案（セクション名を変更）**: `Commands Run` を `Worker Events` に改名し、events.jsonl の行数・種別サマリを記録する形に切り替える
+
+### P4-C: `Non-Negotiable Rules` セクションのハードコード
+
+`summarize()` の `Non-Negotiable Rules` セクションが固定文字列になっており、
+AGENTS.md の実内容を反映していない。プロジェクトごとに AGENTS.md が異なる場合に
+summary が misleading になる可能性がある。
+
+```python
+"Non-Negotiable Rules": [
+    "State lives in SQLite, writes require locks, workers stay replaceable, ..."
+],
+```
+
+- [ ] `summarize()` に `agents_path` 引数を追加し、AGENTS.md の最初の非空行または
+  `## Non-Negotiable Rules` セクションを抽出して埋める
+- [ ] AGENTS.md が存在しない場合は現在の固定文字列にフォールバックする
+
+### P4-D: `artifacts_dir_for_db()` のテスト不在
+
+`artifacts_dir_for_db()` は「デフォルト DB → `ARTIFACTS_DIR`、非デフォルト DB →
+DB 同階層の `artifacts/`、`FYWS_ARTIFACTS_DIR` 設定時は環境変数優先」という
+重要なルーティングロジックを持つが、直接テストされていない。
+
+- [ ] `tests/test_orchestrator.py` に `artifacts_dir_for_db()` の単体テストを追加する
+  - デフォルト DB パスのとき `ARTIFACTS_DIR` と一致することを確認
+  - 非デフォルト DB パスのとき `db.parent / "artifacts"` になることを確認
+  - `FYWS_ARTIFACTS_DIR` 設定時に環境変数が優先されることを確認
+
+### P4-E: token limit 継続 job の自動実行オプション
+
+`_continue_after_token_limit()` が作る continuation job は `waiting_human` ゲートで
+止まるため、長時間の自律実行中に token limit が起きると人間が気づくまでジョブが停止する。
+`--auto-continue-token-limit` フラグで gate をスキップして即座に続行できるようにすると
+夜間・放置運用での使い勝手が向上する。
+
+- [ ] `run_forever()` / `discord_bot.py --run-jobs` に `--auto-continue-token-limit` フラグを追加する
+- [ ] フラグが立っている場合、continuation job の `waiting_human` gate をスキップして `queued` のまま投入する
+- [ ] テストで auto-continue フラグあり/なしの挙動差を確認する
+
+### P4-F: PLAN.md P3 説明文の陳腐化
+
+P3-A の説明文に「`summarize_with_gemini()` は定義されているが **どこからも呼ばれていない**（デッドコード）」と
+記載されているが、この関数はすでに削除済みで実態と乖離している。
+
+- [ ] P3-A 説明文を「`summarize_with_gemini()` は LLM 不要と判断し削除済み。
+  `summarize()` が events.jsonl・git diff・verifier 出力から直接各セクションを埋める形に刷新した。」
+  に更新する
