@@ -23,12 +23,12 @@ def main() -> int:
     add.add_argument("--project", required=True)
     add.add_argument("--prompt", required=True)
     add.add_argument("--cwd", default=".")
-    add.add_argument("--mode", choices=["read", "write", "deploy"], default="write")
+    add.add_argument("--mode", choices=["read", "write", "deploy"])
     add.add_argument("--worker", choices=WORKER_CHOICES, default="gemini")
-    add.add_argument("--c", type=float, default=0.8)
-    add.add_argument("--o", type=float, default=0.8)
-    add.add_argument("--i", type=float, default=0.2)
-    add.add_argument("--ownership", action="append", default=[])
+    add.add_argument("--c", type=float)
+    add.add_argument("--o", type=float)
+    add.add_argument("--i", type=float)
+    add.add_argument("--ownership", action="append")
     add.add_argument("--dry-run", action="store_true")
 
     run = job_sub.add_parser("run")
@@ -36,9 +36,9 @@ def main() -> int:
     run.add_argument("--prompt")
     run.add_argument("--project")
     run.add_argument("--cwd", default=".")
-    run.add_argument("--mode", choices=["read", "write", "deploy"], default="write")
+    run.add_argument("--mode", choices=["read", "write", "deploy"])
     run.add_argument("--worker", choices=WORKER_CHOICES, default="gemini")
-    run.add_argument("--ownership", action="append", default=[])
+    run.add_argument("--ownership", action="append")
     run.add_argument("--dry-run", action="store_true")
 
     job_sub.add_parser("status")
@@ -166,7 +166,7 @@ def _job(args, db_path: Path) -> int:
             if not args.project:
                 raise SystemExit("--project is required with --prompt")
             if args.dry_run:
-                check = orchestrator.dry_run_check(args.project, args.cwd, args.mode, 0.8, 0.8, 0.2, db_path)
+                check = orchestrator.dry_run_check(args.project, args.cwd, args.mode, None, None, None, db_path)
                 print(json.dumps(check, indent=2, ensure_ascii=False))
                 return 0
             job_id = orchestrator.queue_job(

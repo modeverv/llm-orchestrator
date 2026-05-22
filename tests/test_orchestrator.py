@@ -40,6 +40,70 @@ def test_queue_low_safe_opens_gate(tmp_path):
         assert gates["n"] == 1
 
 
+def test_queue_job_reads_project_acceptance_defaults(tmp_path):
+    db = tmp_path / "jobs.sqlite3"
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    (tmp_path / "ACCEPTANCE.md").write_text(
+        """# Acceptance
+
+## safe(T) Score
+
+- C: 0.6
+- O: 0.5
+- I: 0.2
+
+```yaml
+ownership:
+  mode: read
+  paths:
+    - src/
+```
+""",
+        encoding="utf-8",
+    )
+
+    job_id = queue_job("p", task, tmp_path, db_path=db)
+
+    with connect(db) as conn:
+        job = conn.execute("SELECT mode, safe_score, c_score, o_score, i_score, ownership_paths FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    assert job["mode"] == "read"
+    assert job["safe_score"] == 0.24
+    assert job["c_score"] == 0.6
+    assert job["o_score"] == 0.5
+    assert job["i_score"] == 0.2
+    assert job["ownership_paths"] == '["src/"]'
+
+
+def test_deploy_mode_opens_gate_even_when_safe_is_high(tmp_path):
+    db = tmp_path / "jobs.sqlite3"
+    task = tmp_path / "task.md"
+    task.write_text("ship it", encoding="utf-8")
+
+    job_id = queue_job("p", task, tmp_path, mode="deploy", c_score=1, o_score=1, i_score=0, db_path=db)
+
+    with connect(db) as conn:
+        job = conn.execute("SELECT status, safe_score FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        gate_row = conn.execute("SELECT reason FROM human_requests WHERE job_id = ?", (job_id,)).fetchone()
+    assert job["safe_score"] == 1
+    assert job["status"] == "waiting_human"
+    assert gate_row["reason"] == "deploy_requires_human"
+
+
+def test_secret_operation_opens_gate_even_when_safe_is_high(tmp_path):
+    db = tmp_path / "jobs.sqlite3"
+    task = tmp_path / "task.md"
+    task.write_text("rotate the API key used by CI", encoding="utf-8")
+
+    job_id = queue_job("p", task, tmp_path, c_score=1, o_score=1, i_score=0, db_path=db)
+
+    with connect(db) as conn:
+        job = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        gate_row = conn.execute("SELECT reason FROM human_requests WHERE job_id = ?", (job_id,)).fetchone()
+    assert job["status"] == "waiting_human"
+    assert gate_row["reason"] == "secret_operation_requires_human"
+
+
 def test_run_job_with_fake_worker_succeeds(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
     db = tmp_path / "jobs.sqlite3"
@@ -145,6 +209,30 @@ def test_out_of_scope_change_opens_gate(tmp_path, monkeypatch):
         assert [row["reason"] for row in gates] == ["out_of_scope_changes"]
 
 
+def test_untracked_out_of_scope_change_opens_gate(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("rules", encoding="utf-8")
+    (tmp_path / "owned.py").write_text("owned", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    job_id = queue_job("p", task, tmp_path, ownership_paths=["owned.py"], db_path=db)
+
+    run_job(job_id, db_path=db, worker_impl=FakeWorker(write_file="new.py"))
+
+    with connect(db) as conn:
+        job = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        gate_row = conn.execute("SELECT reason FROM human_requests WHERE job_id = ?", (job_id,)).fetchone()
+    assert job["status"] == "waiting_human"
+    assert gate_row["reason"] == "out_of_scope_changes"
+
+
 def test_second_failure_opens_gate(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
     db = tmp_path / "jobs.sqlite3"
@@ -183,6 +271,9 @@ def test_worker_requested_human_opens_gate(tmp_path, monkeypatch):
 
 def test_worker_requires_human_markers():
     assert worker_requires_human("this requires human review")
+    assert worker_requires_human("I cannot proceed without human approval.")
+    assert worker_requires_human("Please confirm before I change the billing flow.")
+    assert worker_requires_human("人間の確認が必要です")
     assert not worker_requires_human("all done")
 
 

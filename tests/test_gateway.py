@@ -68,6 +68,48 @@ def test_queue_from_message_writes_task_and_acceptance(tmp_path):
     assert format_queued(queued) == f"spobook #{queued.job_id} queued worker=gemini (safe=0.512)"
 
 
+def test_queue_from_message_uses_project_acceptance_defaults(tmp_path):
+    project = tmp_path / "spobook"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+    (project / "ACCEPTANCE.md").write_text(
+        """# Acceptance
+
+## safe(T) Score
+
+- C: 0.9
+- O: 0.7
+- I: 0.3
+
+```yaml
+ownership:
+  mode: read
+  paths:
+    - app/
+    - tests/
+```
+""",
+        encoding="utf-8",
+    )
+    db = tmp_path / "jobs.sqlite3"
+
+    queued = queue_from_message("spobook: inspect the app", work_root=tmp_path, db_path=db)
+
+    assert queued.safe_score == 0.44099999999999995
+    acceptance = queued.acceptance_path.read_text(encoding="utf-8")
+    assert "mode: read" in acceptance
+    assert "    - app/" in acceptance
+    assert "    - tests/" in acceptance
+    assert "    - ." not in acceptance
+    with connect(db) as conn:
+        row = conn.execute("SELECT mode, c_score, o_score, i_score, ownership_paths FROM jobs WHERE id = ?", (queued.job_id,)).fetchone()
+    assert row["mode"] == "read"
+    assert row["c_score"] == 0.9
+    assert row["o_score"] == 0.7
+    assert row["i_score"] == 0.3
+    assert row["ownership_paths"] == '["app/", "tests/"]'
+
+
 def test_queue_from_message_uses_worker_prefix(tmp_path):
     project = tmp_path / "myproj1"
     project.mkdir()
@@ -82,6 +124,25 @@ def test_queue_from_message_uses_worker_prefix(tmp_path):
     with connect(db) as conn:
         row = conn.execute("SELECT worker FROM jobs WHERE id = ?", (queued.job_id,)).fetchone()
     assert row["worker"] == "codex"
+
+
+def test_queue_from_message_reports_forced_human_gate(tmp_path):
+    project = tmp_path / "spobook"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("rules", encoding="utf-8")
+
+    queued = queue_from_message(
+        "spobook: deploy this change to production",
+        work_root=tmp_path,
+        c_score=1,
+        o_score=1,
+        i_score=0,
+        db_path=tmp_path / "jobs.sqlite3",
+    )
+
+    assert queued.safe_score == 1
+    assert queued.status == "waiting_human"
+    assert format_queued(queued) == f"spobook #{queued.job_id} waiting_human worker=gemini (safe=1.000)"
 
 
 def test_queue_from_message_explicit_worker_overrides_prefix(tmp_path):

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .acceptance import parse_acceptance_defaults, project_acceptance_path, requires_forced_human_gate
 from .orchestrator import compute_safe, project_list, queue_job
 
 
@@ -190,11 +191,11 @@ def format_projects(projects: list[dict]) -> str:
 def queue_from_message(
     message: str,
     work_root: str | Path = DEFAULT_WORK_ROOT,
-    mode: str = "write",
+    mode: str | None = None,
     worker: str | None = None,
-    c_score: float = 0.8,
-    o_score: float = 0.8,
-    i_score: float = 0.2,
+    c_score: float | None = None,
+    o_score: float | None = None,
+    i_score: float | None = None,
     db_path: str | Path | None = None,
     create: bool = False,
 ) -> QueuedGatewayJob:
@@ -205,7 +206,12 @@ def queue_from_message(
             create_project(parsed.project, work_root)
         else:
             raise FileNotFoundError(cwd)
-    ownership_paths = discover_ownership_paths(cwd)
+    defaults = parse_acceptance_defaults(project_acceptance_path(cwd))
+    mode = mode or defaults.mode
+    c_score = defaults.c_score if c_score is None else c_score
+    o_score = defaults.o_score if o_score is None else o_score
+    i_score = defaults.i_score if i_score is None else i_score
+    ownership_paths = defaults.ownership_paths
     task = write_task_file(cwd, parsed.instruction)
     acceptance = write_acceptance_file(
         cwd,
@@ -232,25 +238,9 @@ def queue_from_message(
         ownership_paths=ownership_paths,
         **kwargs,
     )
-    status = "waiting_human" if safe < 0.3 else "queued"
+    status = "waiting_human" if safe < 0.3 or requires_forced_human_gate(mode, parsed.instruction) else "queued"
     return QueuedGatewayJob(job_id, parsed.project, worker or parsed.worker, safe, status, cwd, task, acceptance)
 
 
 def discover_ownership_paths(project_path: str | Path) -> list[str]:
-    acceptance = Path(project_path) / "ACCEPTANCE.md"
-    if not acceptance.exists():
-        return ["."]
-    paths: list[str] = []
-    in_paths = False
-    for raw in acceptance.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if line == "paths:":
-            in_paths = True
-            continue
-        if in_paths:
-            if line.startswith("- "):
-                paths.append(line[2:].strip())
-                continue
-            if line and not raw.startswith(" "):
-                break
-    return paths or ["."]
+    return parse_acceptance_defaults(project_acceptance_path(project_path)).ownership_paths

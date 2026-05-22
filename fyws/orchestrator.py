@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
 
-from . import evaluator, gate, lock, summarizer, verifier
+from . import acceptance, evaluator, gate, lock, summarizer, verifier
 from .db import DEFAULT_DB_PATH, connect, init_db
 from .workers.base import WorkerBase, WorkerResult
 from .workers.claude import ClaudeWorker
@@ -29,11 +30,11 @@ def queue_job(
     project: str,
     prompt_path: str | Path,
     cwd: str | Path,
-    mode: str = "write",
+    mode: str | None = None,
     worker: str = "gemini",
-    c_score: float = 0.8,
-    o_score: float = 0.8,
-    i_score: float = 0.2,
+    c_score: float | None = None,
+    o_score: float | None = None,
+    i_score: float | None = None,
     ownership_paths: list[str] | None = None,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> int:
@@ -41,7 +42,16 @@ def queue_job(
     prompt = Path(prompt_path).resolve()
     if not prompt.exists():
         raise FileNotFoundError(prompt)
+    resolved_cwd = Path(cwd).resolve()
+    defaults = acceptance.parse_acceptance_defaults(acceptance.project_acceptance_path(resolved_cwd))
+    mode = mode or defaults.mode
+    c_score = defaults.c_score if c_score is None else c_score
+    o_score = defaults.o_score if o_score is None else o_score
+    i_score = defaults.i_score if i_score is None else i_score
+    ownership_paths = defaults.ownership_paths if ownership_paths is None else ownership_paths
+    task_text = prompt.read_text(encoding="utf-8", errors="replace")
     safe_score = compute_safe(c_score, o_score, i_score)
+    forced_gate_reason = acceptance.requires_forced_human_gate(mode, task_text)
     with connect(db_path) as conn:
         cur = conn.execute(
             """
@@ -53,14 +63,14 @@ def queue_job(
             (
                 project,
                 str(prompt),
-                str(Path(cwd).resolve()),
+                str(resolved_cwd),
                 mode,
                 worker,
                 safe_score,
                 c_score,
                 o_score,
                 i_score,
-                json.dumps(ownership_paths or []),
+                json.dumps(ownership_paths),
             ),
         )
         job_id = int(cur.lastrowid)
@@ -68,7 +78,14 @@ def queue_job(
             "INSERT INTO job_events(job_id, event_type, message, payload) VALUES (?, 'queued', ?, '{}')",
             (job_id, f"queued {project} safe={safe_score:.3f}"),
         )
-        if safe_score < 0.3:
+        if forced_gate_reason:
+            gate.open_gate(
+                conn,
+                job_id,
+                "This job may involve deploy, DB, or secret operations. Human approval is required before execution.",
+                forced_gate_reason,
+            )
+        elif safe_score < 0.3:
             gate.open_gate(
                 conn,
                 job_id,
@@ -115,6 +132,7 @@ def run_job(
     try:
         _clear_artifacts(artifact_dir)
         _prepare_artifacts(job, artifact_dir, db_path)
+        ownership_baseline = git_status_paths(job["cwd"])
         worker = worker_impl or route_worker(job["worker"])
         with connect(db_path) as conn:
             conn.execute(
@@ -147,7 +165,7 @@ def run_job(
                 )
                 _event(conn, job_id, "error", "worker requested human judgment")
             return result
-        out_of_scope = ownership_check(job["cwd"], ownership_paths)
+        out_of_scope = ownership_check(job["cwd"], ownership_paths, baseline_paths=ownership_baseline)
         if out_of_scope:
             result.out_of_scope_files.extend(out_of_scope)
             _write_diff(job["cwd"], artifact_dir)
@@ -237,22 +255,40 @@ def route_worker(name: str) -> WorkerBase:
     raise ValueError(f"unknown worker: {name}")
 
 
-def ownership_check(cwd: str | Path, ownership_paths: list[str]) -> list[str]:
+def ownership_check(cwd: str | Path, ownership_paths: list[str], baseline_paths: set[str] | None = None) -> list[str]:
     if not ownership_paths:
         return []
+    changed = sorted(git_status_paths(cwd) - (baseline_paths or set()))
+    allowed = [path.rstrip("/") for path in ownership_paths]
+    return [path for path in changed if not any(_is_allowed(path, prefix) for prefix in allowed)]
+
+
+def git_status_paths(cwd: str | Path) -> set[str]:
     try:
         proc = subprocess.run(
-            ["git", "diff", "--name-only"],
+            ["git", "status", "--porcelain"],
             cwd=str(cwd),
             text=True,
             capture_output=True,
             check=False,
         )
     except FileNotFoundError:
-        return []
-    changed = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-    allowed = [path.rstrip("/") for path in ownership_paths]
-    return [path for path in changed if not any(_is_allowed(path, prefix) for prefix in allowed)]
+        return set()
+    return set(_changed_paths_from_porcelain(proc.stdout))
+
+
+def _changed_paths_from_porcelain(output: str) -> list[str]:
+    paths: list[str] = []
+    for raw in output.splitlines():
+        if not raw.strip():
+            continue
+        path = raw[3:] if len(raw) > 3 else raw.strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        path = path.strip().strip('"')
+        if path:
+            paths.append(path)
+    return paths
 
 
 def list_jobs(db_path: str | Path = DEFAULT_DB_PATH) -> list[dict]:
@@ -301,20 +337,32 @@ def log_lines(job_id: int) -> list[str]:
 def dry_run_check(
     project: str,
     cwd: str | Path,
-    mode: str,
-    c_score: float,
-    o_score: float,
-    i_score: float,
+    mode: str | None,
+    c_score: float | None,
+    o_score: float | None,
+    i_score: float | None,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> dict[str, object]:
     init_db(db_path)
+    resolved_cwd = Path(cwd).resolve()
+    defaults = acceptance.parse_acceptance_defaults(acceptance.project_acceptance_path(resolved_cwd))
+    mode = mode or defaults.mode
+    c_score = defaults.c_score if c_score is None else c_score
+    o_score = defaults.o_score if o_score is None else o_score
+    i_score = defaults.i_score if i_score is None else i_score
     safe_score = compute_safe(c_score, o_score, i_score)
     with connect(db_path) as conn:
-        conflict = lock.check_conflict(conn, project, str(Path(cwd).resolve()), mode)
+        conflict = lock.check_conflict(conn, project, str(resolved_cwd), mode)
+    forced_gate_reason = acceptance.requires_forced_human_gate(mode, "")
     return {
         "safe_score": safe_score,
-        "requires_human_gate": safe_score < 0.3,
+        "requires_human_gate": safe_score < 0.3 or forced_gate_reason is not None,
+        "human_gate_reason": forced_gate_reason or ("safe_below_threshold" if safe_score < 0.3 else None),
         "lock_conflict": conflict,
+        "mode": mode,
+        "c_score": c_score,
+        "o_score": o_score,
+        "i_score": i_score,
     }
 
 
@@ -437,12 +485,20 @@ def _find_acceptance_path(job) -> Path | None:
 
 
 def worker_requires_human(message: str) -> bool:
-    markers = [
-        "判断が必要",
-        "人間の判断",
-        "human judgment",
-        "requires human",
-        "needs human",
-    ]
     lower = message.lower()
-    return any(marker in message or marker in lower for marker in markers)
+    patterns = [
+        r"判断が必要",
+        r"人間(?:の)?判断",
+        r"人間(?:の)?確認",
+        r"人間(?:の)?承認",
+        r"確認してください",
+        r"承認してください",
+        r"勝手に(?:進め|判断)られ",
+        r"human[-\s_]*(?:gate|approval|review|judg(?:e)?ment|decision|input)",
+        r"(?:requires?|needs?|need|requesting)\s+(?:a\s+)?human",
+        r"(?:cannot|can't|shouldn't|must not)\s+(?:proceed|continue|decide)\s+without\s+(?:human|approval)",
+        r"(?:please|needs?|requires?)\s+(?:approve|confirm|review)",
+        r"manual\s+(?:approval|review|intervention|decision)",
+        r"blocked\s+(?:on|by)\s+(?:human|approval|decision)",
+    ]
+    return any(re.search(pattern, lower) or re.search(pattern, message) for pattern in patterns)

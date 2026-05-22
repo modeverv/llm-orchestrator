@@ -260,11 +260,18 @@ Geminiトークン切れ検知
 
 ### P1: safe(T) と ownership
 
-- [ ] `ACCEPTANCE.md` から `C/O/I`, mode, ownership paths をパースして job 作成時の既定値にする
-- [ ] Discord指示から自動生成する `acceptance.md` の所有範囲を `.` 既定ではなく、project defaultから安全に絞る
-- [ ] deploy / DB変更 / secret操作は safe値に関係なく human_gate にする
-- [ ] ownership checkを `git diff --name-only` だけでなく untracked file も含めて検査する（`git status --porcelain` で新規ファイルも拾う）
-- [ ] `worker_requires_human` の文字列マッチングを強化する（現状は固定キーワードのみ。LLMが想定外の表現を使うと素通りする）
+- [x] `ACCEPTANCE.md` から `C/O/I`, mode, ownership paths をパースして job 作成時の既定値にする
+- [x] Discord指示から自動生成する `acceptance.md` の所有範囲を `.` 既定ではなく、project defaultから安全に絞る
+- [x] deploy / DB変更 / secret操作は safe値に関係なく human_gate にする
+- [x] ownership checkを `git diff --name-only` だけでなく untracked file も含めて検査する（`git status --porcelain` で新規ファイルも拾う）
+- [x] `worker_requires_human` の文字列マッチングを強化する（現状は固定キーワードのみ。LLMが想定外の表現を使うと素通りする）
+
+2026-05-22 P1実装:
+- `fyws/acceptance.py` を追加し、project `ACCEPTANCE.md` の `C/O/I`, `ownership.mode`, `ownership.paths` を job 作成時の既定値として読む。明示指定された CLI / gateway 引数は既定値より優先する。
+- Discord gateway が生成する `task.acceptance.md` は project default の ownership paths を引き継ぎ、project default がない場合だけ `.` にフォールバックする。
+- `mode=deploy`、または指示文に deploy / DB migration / secret 操作の明示語がある場合は、safe(T) が高くても `waiting_human` にする。
+- ownership check は worker 実行直前の `git status --porcelain` をbaselineにし、worker後に増えた tracked/untracked 変更だけを ownership paths と照合する。
+- `worker_requires_human` は日本語・英語の承認/確認/人間判断/without approval 系表現を正規表現で検出する。
 
 ### P1: runner/lock運用
 
