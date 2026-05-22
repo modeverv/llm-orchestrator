@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -19,6 +21,7 @@ class CodexWorker:
         artifact_dir: str | Path,
         ownership_paths: list[str],
         resume: bool = False,
+        timeout_seconds: float | None = None,
     ) -> WorkerResult:
         prompt = Path(prompt_path).read_text(encoding="utf-8")
         artifact = Path(artifact_dir)
@@ -41,22 +44,33 @@ class CodexWorker:
         cmd.append("-")
 
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                input=prompt,
                 cwd=str(cwd),
                 text=True,
-                capture_output=True,
-                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                start_new_session=True,
             )
+            stdout, stderr = proc.communicate(prompt, timeout=timeout_seconds)
         except FileNotFoundError as exc:
             error = f"codex executable not found: {exc}"
             events_path.write_text(json.dumps({"event_type": "error", "message": error}) + "\n", encoding="utf-8")
             return WorkerResult(False, "", str(events_path), error=error)
+        except subprocess.TimeoutExpired as exc:
+            _terminate_process(proc)
+            stdout = _as_text(exc.stdout)
+            stderr = _as_text(exc.stderr)
+            output = stdout + ("\n" if stdout and stderr else "") + stderr
+            events_path.write_text(output + json.dumps({"event_type": "error", "message": f"codex timed out after {timeout_seconds:g}s"}) + "\n", encoding="utf-8")
+            last_message = _last_message(last_path, output)
+            last_path.write_text(last_message, encoding="utf-8")
+            return WorkerResult(False, last_message, str(events_path), step_count=len(output.splitlines()), error=f"codex timed out after {timeout_seconds:g}s")
 
-        output = proc.stdout
-        if proc.stderr:
-            output = output + ("\n" if output else "") + proc.stderr
+        output = stdout
+        if stderr:
+            output = output + ("\n" if output else "") + stderr
         events_path.write_text(output, encoding="utf-8")
         last_message = _last_message(last_path, output)
         last_path.write_text(last_message, encoding="utf-8")
@@ -86,6 +100,29 @@ def _last_message(last_path: Path, output: str) -> str:
         if message:
             return message
     return ""
+
+
+def _as_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _terminate_process(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
 
 
 def _parse_json_line(line: str) -> dict | None:

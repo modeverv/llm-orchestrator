@@ -268,11 +268,18 @@ Geminiトークン切れ検知
 
 ### P1: runner/lock運用
 
-- [ ] runnerを長時間動かしたときの stale lock 回収ルールを実装する
-- [ ] 同一project read jobの並列とwrite job待機が期待通りになる統合テストを追加する
-- [ ] workerプロセスのtimeout/cancelを実装する（現状はハング時にプロセスが生きたまま詰まる。crash recoveryはプロセス死亡時にしか効かない）
-- [ ] `ClaudeWorker` をストリーミング化して token_in/out を取得する（現状は `--print` + blocking で tokens 常に None、長時間タスクで途中経過が見えない）
-- [ ] job中断後のresume方針を明確化する（Gemini `--resume latest` をいつ使うか）
+- [x] runnerを長時間動かしたときの stale lock 回収ルールを実装する
+- [x] 同一project read jobの並列とwrite job待機が期待通りになる統合テストを追加する
+- [x] workerプロセスのtimeout/cancelを実装する（現状はハング時にプロセスが生きたまま詰まる。crash recoveryはプロセス死亡時にしか効かない）
+- [x] `ClaudeWorker` をストリーミング化して token_in/out を取得する（現状は `--print` + blocking で tokens 常に None、長時間タスクで途中経過が見えない）
+- [x] job中断後のresume方針を明確化する（Gemini `--resume latest` をいつ使うか）
+
+2026-05-22 P1実装:
+- stale lock は `locks.owner` の `host:pid` と `jobs.status` で判定する。jobがrunning以外、job行がない、または同一hostのowner pidが死んでいて `--stale-lock-seconds` を超えたlockをrunnerが回収する。別host ownerは生存確認できないため自動削除しない。
+- runner はqueued先頭N件を機械的に投げず、既存lockと同一batch内の仮想lockを見て実行可能jobだけ選ぶ。同一project/cwdのreadは同時実行し、write/deployはread/write/deployが残る限り待機する。
+- `dispatch` / Discord `--run-jobs` に `--worker-timeout` と `--stale-lock-seconds` を追加した。timeout時はworker process groupへSIGTERM、残存時SIGKILLを送り、eventsにerrorを記録する。
+- ClaudeWorkerは `--print --permission-mode acceptEdits` のままstdout/stderrを逐次 `events.jsonl` に流し、JSON usageまたはテキストのtoken表記から `tokens_in/out` を拾う。
+- resumeは同一Gemini jobの継続だけに限定する。`gemini_session_id` が記録済みでattempts>0の同一job再実行時だけ `--resume latest` を使い、別jobはsummary/contextで新セッションへ渡す。
 
 ### P2: evaluator/prompt改善
 

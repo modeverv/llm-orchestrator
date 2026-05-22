@@ -130,12 +130,14 @@ Gemini CLIは `--resume latest` でセッションを継続できる。
 FYWSは以下の方針でこれを使う：
 
 ```
-同一jobの継続    → --resume latest（gemini_session_idをjobsテーブルに記録）
+同一Gemini jobの継続 → gemini_session_idが記録済み、かつattempts>0なら --resume latest
 別jobへの引き継ぎ → 新セッション + context.md（summary.md + AGENTS.md + task.md）
 トークン上限到達  → 現セッション終了 → summarize → 新セッションで再開
 ```
 
 セッションIDは `--list-sessions` で確認できるが、FYWSは基本的に `latest` で管理する。
+Claude/Codex workerではCLI側のresumeに依存せず、jobごとのcontext.mdを正とする。
+別jobに `--resume latest` を流用すると前jobの暗黙状態が混ざるため禁止する。
 
 ---
 
@@ -203,6 +205,7 @@ class WorkerBase:
         artifact_dir: str,
         ownership_paths: list[str],
         resume: bool = False,
+        timeout_seconds: float | None = None,
     ) -> WorkerResult: ...
 ```
 

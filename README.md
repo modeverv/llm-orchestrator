@@ -11,6 +11,7 @@ python cli.py job add --project myproject --prompt task.md --cwd /path/to/repo -
 python cli.py job add --project myproject --prompt task.md --cwd /path/to/repo --worker codex --ownership path/to/edit.py
 python cli.py job run
 python cli.py dispatch --max-workers 2
+python cli.py dispatch --max-workers 2 --worker-timeout 3600 --stale-lock-seconds 21600
 python cli.py status
 python cli.py log 1
 ```
@@ -82,3 +83,5 @@ Use `python cli.py project create <name>` to create a new project directory with
 - `discord_bot.py` works as a dependency-free gateway helper by default.
 - `python discord_bot.py --serve --run-jobs` runs a live Discord gateway when `discord.py` is installed and `DISCORD_TOKEN` is set.
 - Jobs stuck in `running` state from a previous crash are automatically requeued when `dispatch --forever` starts.
+- Long-running dispatch can reap stale locks and stop hung workers with `--stale-lock-seconds` and `--worker-timeout`.
+- Gemini resume is limited to the same job after a recorded Gemini session; separate jobs always use a fresh CLI session plus `context.md`.

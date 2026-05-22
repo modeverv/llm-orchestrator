@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import selectors
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 from .base import WorkerResult
@@ -19,6 +23,7 @@ class GeminiWorker:
         artifact_dir: str | Path,
         ownership_paths: list[str],
         resume: bool = False,
+        timeout_seconds: float | None = None,
     ) -> WorkerResult:
         prompt = Path(prompt_path).read_text(encoding="utf-8")
         artifact = Path(artifact_dir)
@@ -46,6 +51,7 @@ class GeminiWorker:
 
         try:
             with events_path.open("w", encoding="utf-8") as events:
+                start = time.monotonic()
                 proc = subprocess.Popen(
                     cmd,
                     cwd=str(cwd),
@@ -53,23 +59,30 @@ class GeminiWorker:
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
+                    start_new_session=True,
                 )
                 assert proc.stdout is not None
+                selector = selectors.DefaultSelector()
+                selector.register(proc.stdout, selectors.EVENT_READ)
+                while proc.poll() is None:
+                    if _timed_out(start, timeout_seconds):
+                        _terminate_process(proc)
+                        error = f"gemini timed out after {timeout_seconds:g}s"
+                        events.write(json.dumps({"event_type": "error", "message": error}) + "\n")
+                        events.flush()
+                        (artifact / "last_message.txt").write_text(last_message, encoding="utf-8")
+                        return WorkerResult(False, last_message, str(events_path), tokens_in, tokens_out, step_count, error=error)
+                    for _key, _mask in selector.select(timeout=0.1):
+                        line = proc.stdout.readline()
+                        if line:
+                            last_message, tokens_in, tokens_out, step_count = _record_line(
+                                events, line, last_message, tokens_in, tokens_out, step_count
+                            )
                 for line in proc.stdout:
-                    events.write(line)
-                    events.flush()
-                    step_count += 1
-                    parsed = _parse_json_line(line)
-                    if parsed is None:
-                        if line.strip():
-                            last_message = line.strip()
-                        continue
-                    message = _extract_message(parsed)
-                    if message:
-                        last_message = message
-                    usage = parsed.get("usage") or parsed.get("usageMetadata") or {}
-                    tokens_in = _first_int(usage, ["promptTokenCount", "input_tokens", "tokens_in"], tokens_in)
-                    tokens_out = _first_int(usage, ["candidatesTokenCount", "output_tokens", "tokens_out"], tokens_out)
+                    if line:
+                        last_message, tokens_in, tokens_out, step_count = _record_line(
+                            events, line, last_message, tokens_in, tokens_out, step_count
+                        )
                 returncode = proc.wait()
         except FileNotFoundError as exc:
             error = f"gemini executable not found: {exc}"
@@ -89,6 +102,43 @@ class GeminiWorker:
             step_count=step_count,
             error=error,
         )
+
+
+def _record_line(events, line: str, last_message: str, tokens_in: int | None, tokens_out: int | None, step_count: int):
+    events.write(line)
+    events.flush()
+    step_count += 1
+    parsed = _parse_json_line(line)
+    if parsed is None:
+        if line.strip():
+            last_message = line.strip()
+        return last_message, tokens_in, tokens_out, step_count
+    message = _extract_message(parsed)
+    if message:
+        last_message = message
+    usage = parsed.get("usage") or parsed.get("usageMetadata") or {}
+    tokens_in = _first_int(usage, ["promptTokenCount", "input_tokens", "tokens_in"], tokens_in)
+    tokens_out = _first_int(usage, ["candidatesTokenCount", "output_tokens", "tokens_out"], tokens_out)
+    return last_message, tokens_in, tokens_out, step_count
+
+
+def _timed_out(start: float, timeout_seconds: float | None) -> bool:
+    return timeout_seconds is not None and time.monotonic() - start >= timeout_seconds
+
+
+def _terminate_process(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
 
 
 def _parse_json_line(line: str) -> dict | None:

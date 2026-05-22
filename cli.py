@@ -64,6 +64,8 @@ def main() -> int:
     dispatch.add_argument("--max-workers", type=int, default=2)
     dispatch.add_argument("--forever", action="store_true")
     dispatch.add_argument("--interval", type=float, default=5)
+    dispatch.add_argument("--worker-timeout", type=float)
+    dispatch.add_argument("--stale-lock-seconds", type=float, default=runner.DEFAULT_STALE_LOCK_SECONDS)
 
     project = sub.add_parser("project")
     project_sub = project.add_subparsers(dest="project_command", required=True)
@@ -112,9 +114,20 @@ def main() -> int:
         return 0
     if args.command == "dispatch":
         if args.forever:
-            runner.run_forever(db_path, max_workers=args.max_workers, interval_seconds=args.interval)
+            runner.run_forever(
+                db_path,
+                max_workers=args.max_workers,
+                interval_seconds=args.interval,
+                worker_timeout_seconds=args.worker_timeout,
+                stale_lock_seconds=args.stale_lock_seconds,
+            )
             return 0
-        completed = runner.run_once(db_path, max_workers=args.max_workers)
+        completed = runner.run_once(
+            db_path,
+            max_workers=args.max_workers,
+            worker_timeout_seconds=args.worker_timeout,
+            stale_lock_seconds=args.stale_lock_seconds,
+        )
         print(" ".join(str(job_id) for job_id in completed) if completed else "no queued jobs")
         return 0
     if args.command == "project":

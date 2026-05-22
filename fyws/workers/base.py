@@ -25,5 +25,6 @@ class WorkerBase(Protocol):
         artifact_dir: str | Path,
         ownership_paths: list[str],
         resume: bool = False,
+        timeout_seconds: float | None = None,
     ) -> WorkerResult:
         ...

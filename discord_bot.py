@@ -23,6 +23,8 @@ def main() -> int:
     parser.add_argument("--run-jobs", action="store_true", help="run queued jobs in the Discord process")
     parser.add_argument("--max-workers", type=int, default=2)
     parser.add_argument("--interval", type=float, default=5)
+    parser.add_argument("--worker-timeout", type=float)
+    parser.add_argument("--stale-lock-seconds", type=float, default=runner.DEFAULT_STALE_LOCK_SECONDS)
     parser.add_argument(
         "--message-content-intent",
         action="store_true",
@@ -46,6 +48,8 @@ def main() -> int:
             run_jobs=args.run_jobs,
             max_workers=args.max_workers,
             interval_seconds=args.interval,
+            worker_timeout_seconds=args.worker_timeout,
+            stale_lock_seconds=args.stale_lock_seconds,
             message_content_intent=args.message_content_intent,
             message_poll_interval=args.message_poll_interval,
             allow_self_messages=args.allow_self_messages,
@@ -102,6 +106,8 @@ def serve_discord(
     run_jobs: bool = False,
     max_workers: int = 2,
     interval_seconds: float = 5,
+    worker_timeout_seconds: float | None = None,
+    stale_lock_seconds: float = runner.DEFAULT_STALE_LOCK_SECONDS,
     message_content_intent: bool = False,
     message_poll_interval: float = 2,
     allow_self_messages: bool = False,
@@ -123,7 +129,18 @@ def serve_discord(
     async def on_ready():
         print(f"FYWS Discord gateway connected as {client.user}")
         if run_jobs:
-            client.loop.create_task(_runner_loop(client, notify_channel, channel_id, db_path, max_workers, interval_seconds))
+            client.loop.create_task(
+                _runner_loop(
+                    client,
+                    notify_channel,
+                    channel_id,
+                    db_path,
+                    max_workers,
+                    interval_seconds,
+                    worker_timeout_seconds,
+                    stale_lock_seconds,
+                )
+            )
         if not message_content_intent and channel_id is not None:
             client.loop.create_task(
                 _message_poll_loop(
@@ -217,7 +234,16 @@ def handle_message(message: str, work_root: str, db_path: str) -> str:
     return ""
 
 
-async def _runner_loop(client, notify_channel: dict, channel_id: int | None, db_path: str, max_workers: int, interval: float) -> None:
+async def _runner_loop(
+    client,
+    notify_channel: dict,
+    channel_id: int | None,
+    db_path: str,
+    max_workers: int,
+    interval: float,
+    worker_timeout_seconds: float | None,
+    stale_lock_seconds: float,
+) -> None:
     while not client.is_closed():
         notifications: list[str] = []
 
@@ -225,7 +251,14 @@ async def _runner_loop(client, notify_channel: dict, channel_id: int | None, db_
             notifications.append(format_job_notification(job_id, project, status, db_path))
 
         try:
-            await asyncio.to_thread(runner.run_once, db_path, max_workers, notify)
+            await asyncio.to_thread(
+                runner.run_once,
+                db_path,
+                max_workers,
+                notify,
+                worker_timeout_seconds,
+                stale_lock_seconds,
+            )
         except Exception as exc:
             print(f"runner error (continuing): {exc}", flush=True)
         channel = notify_channel.get("value")

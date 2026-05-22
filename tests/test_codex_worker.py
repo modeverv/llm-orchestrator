@@ -1,31 +1,38 @@
 from __future__ import annotations
 
-import subprocess
-
 from fyws.workers.codex import CodexWorker, _extract_message
 
 
-def test_codex_worker_runs_noninteractively(tmp_path, monkeypatch):
+def test_codex_worker_runs_noninteractively(tmp_path):
     prompt = tmp_path / "task.md"
     prompt.write_text("do it", encoding="utf-8")
     artifact = tmp_path / "artifacts"
-    calls = []
+    executable = tmp_path / "fake-codex"
+    argv_path = tmp_path / "argv.txt"
+    stdin_path = tmp_path / "stdin.txt"
+    executable.write_text(
+        f"""#!/bin/sh
+printf '%s\\n' "$@" > {argv_path}
+cat > {stdin_path}
+while [ "$1" ]; do
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    mkdir -p "$(dirname "$1")"
+    printf '%s' done > "$1"
+  fi
+  shift
+done
+printf '%s\\n' '{{"msg":"event"}}'
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
 
-    def fake_run(cmd, **kwargs):
-        calls.append((cmd, kwargs))
-        last_path = artifact / "last_message.txt"
-        last_path.parent.mkdir(parents=True, exist_ok=True)
-        last_path.write_text("done", encoding="utf-8")
-        return subprocess.CompletedProcess(cmd, 0, stdout='{"msg":"event"}\n', stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    result = CodexWorker().run(prompt, tmp_path, artifact, ["notes.txt"])
+    result = CodexWorker(str(executable)).run(prompt, tmp_path, artifact, ["notes.txt"])
 
     assert result.success
     assert result.last_message == "done"
-    assert calls[0][0] == [
-        "codex",
+    assert argv_path.read_text(encoding="utf-8").splitlines() == [
         "exec",
         "-C",
         str(tmp_path.resolve()),
@@ -35,7 +42,7 @@ def test_codex_worker_runs_noninteractively(tmp_path, monkeypatch):
         "--dangerously-bypass-approvals-and-sandbox",
         "-",
     ]
-    assert calls[0][1]["input"] == "do it"
+    assert stdin_path.read_text(encoding="utf-8") == "do it"
 
 
 def test_codex_worker_reports_missing_executable(tmp_path):

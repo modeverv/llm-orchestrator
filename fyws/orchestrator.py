@@ -94,6 +94,7 @@ def run_job(
     job_id: int,
     db_path: str | Path = DEFAULT_DB_PATH,
     worker_impl: WorkerBase | None = None,
+    worker_timeout_seconds: float | None = None,
 ) -> WorkerResult:
     init_db(db_path)
     with connect(db_path) as conn:
@@ -128,7 +129,14 @@ def run_job(
             )
             _event(conn, job_id, "running", "job started")
 
-        result = worker.run(job["prompt_path"], job["cwd"], artifact_dir, ownership_paths)
+        result = worker.run(
+            job["prompt_path"],
+            job["cwd"],
+            artifact_dir,
+            ownership_paths,
+            resume=_should_resume(job),
+            timeout_seconds=worker_timeout_seconds,
+        )
         if worker_requires_human(result.last_message):
             with connect(db_path) as conn:
                 gate.open_gate(
@@ -391,6 +399,10 @@ def recover_stuck_jobs(db_path: str | Path = DEFAULT_DB_PATH) -> list[int]:
             _event(conn, job_id, "queued", "recovered from stuck running state after restart")
             lock.release_lock(conn, job_id)
     return ids
+
+
+def _should_resume(job) -> bool:
+    return job["worker"] == "gemini" and job["attempts"] > 0 and bool(job["gemini_session_id"])
 
 
 def project_list(db_path: str | Path = DEFAULT_DB_PATH) -> list[dict]:

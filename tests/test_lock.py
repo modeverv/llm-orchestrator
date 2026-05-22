@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from fyws.db import connect, init_db
-from fyws.lock import acquire_lock, check_conflict, release_lock
+import os
+
+from fyws.lock import acquire_lock, check_conflict, reap_stale_locks, release_lock
 
 
 def _job(conn, mode: str = "write") -> int:
@@ -36,3 +38,21 @@ def test_read_locks_can_share_when_no_writer(tmp_path):
         second = _job(conn, "read")
         assert acquire_lock(conn, first, "p", "/tmp/p", "read")
         assert acquire_lock(conn, second, "p", "/tmp/p", "read")
+
+
+def test_reap_stale_locks_removes_dead_owner_lock(tmp_path):
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    with connect(db) as conn:
+        job_id = _job(conn)
+        conn.execute("UPDATE jobs SET status = 'running' WHERE id = ?", (job_id,))
+        conn.execute(
+            """
+            INSERT INTO locks(project, cwd, mode, job_id, owner, acquired_at)
+            VALUES ('p', '/tmp/p', 'write', ?, ?, datetime('now', '-2 hours'))
+            """,
+            (job_id, f"{os.uname().nodename}:999999"),
+        )
+
+        assert reap_stale_locks(conn, max_age_seconds=1) == [job_id]
+        assert not check_conflict(conn, "p", "/tmp/p", "write")

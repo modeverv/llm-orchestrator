@@ -15,7 +15,7 @@ class FakeWorker:
         self.message = message
         self.write_file = write_file
 
-    def run(self, prompt_path, cwd, artifact_dir, ownership_paths, resume=False):
+    def run(self, prompt_path, cwd, artifact_dir, ownership_paths, resume=False, timeout_seconds=None):
         events = Path(artifact_dir) / "events.jsonl"
         events.write_text('{"text":"done"}\n', encoding="utf-8")
         (Path(artifact_dir) / "last_message.txt").write_text(self.message, encoding="utf-8")
