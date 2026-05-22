@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import subprocess
+import json
+import re
 from pathlib import Path
 
 
@@ -25,18 +26,43 @@ def fixed_empty_summary() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def summarize(artifact_dir: str | Path, user_goal: str, cwd: str, status: str, worker_message: str) -> Path:
+def summarize(
+    artifact_dir: str | Path,
+    user_goal: str,
+    cwd: str,
+    status: str,
+    worker_message: str,
+    files_changed: list[str] | None = None,
+    verify_outputs: list[str] | None = None,
+    gate_reason: str | None = None,
+) -> Path:
     artifact = Path(artifact_dir)
     summary_path = artifact / "summary.md"
-    content = fixed_empty_summary()
-    content = content.replace("## User Goal\n- Not recorded.", f"## User Goal\n- {user_goal}")
-    content = content.replace("## Repo / CWD\n- Not recorded.", f"## Repo / CWD\n- {cwd}")
-    content = content.replace("## Current State\n- Not recorded.", f"## Current State\n- {status}")
-    if worker_message:
-        content = content.replace(
-            "## Decisions Made\n- Not recorded.",
-            "## Decisions Made\n- Worker final message captured in last_message.txt.",
-        )
+    decisions, next_action = _extract_decisions_and_next_action(worker_message)
+    sections = {
+        "User Goal": [_clip_line(user_goal)],
+        "Repo / CWD": [cwd],
+        "Non-Negotiable Rules": [
+            "State lives in SQLite, writes require locks, workers stay replaceable, human_gate controls unsafe judgment, and ownership paths must be enforced."
+        ],
+        "Files Changed": files_changed or [],
+        "Commands Run": _commands_from_events(artifact / "events.jsonl"),
+        "Decisions Made": decisions,
+        "Current State": [status],
+        "Verification": _verification_lines(verify_outputs),
+        "Blockers": [gate_reason] if gate_reason else [],
+        "Next Action": next_action,
+    }
+    lines = ["# Job Summary", ""]
+    for section in SUMMARY_SECTIONS:
+        lines.append(f"## {section}")
+        values = [value for value in sections.get(section, []) if value]
+        if values:
+            lines.extend(f"- {value}" for value in values)
+        else:
+            lines.append("- Not recorded.")
+        lines.append("")
+    content = "\n".join(lines).rstrip() + "\n"
     summary_path.write_text(content, encoding="utf-8")
     return summary_path
 
@@ -73,25 +99,94 @@ def token_limit_detected(message: str) -> bool:
     return any(marker in lower for marker in markers)
 
 
-def summarize_with_gemini(events_path: str | Path, summary_path: str | Path) -> bool:
-    prompt = (
-        "Summarize this job into the exact FYWS schema, with all headings present. "
-        "Do not add headings.\n\n"
-        + Path(events_path).read_text(encoding="utf-8", errors="replace")
-    )
+def _commands_from_events(events_path: Path) -> list[str]:
+    if not events_path.exists():
+        return []
+    commands: list[str] = []
+    for raw in events_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parsed = _parse_json_line(line)
+        command = _command_from_event(parsed) if parsed else None
+        if command is None and line.startswith("$ "):
+            command = line[2:].strip()
+        if command and command not in commands:
+            commands.append(command)
+    return commands
+
+
+def _command_from_event(event: dict | None) -> str | None:
+    if not event:
+        return None
+    for key in ("command", "cmd", "argv"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, list) and value:
+            return " ".join(str(part) for part in value)
+    message = event.get("message")
+    if isinstance(message, str) and message.startswith("$ "):
+        return message[2:].strip()
+    return None
+
+
+def _verification_lines(verify_outputs: list[str] | None) -> list[str]:
+    if verify_outputs is None:
+        return []
+    if not verify_outputs:
+        return ["No verify commands were configured."]
+    lines: list[str] = []
+    for output in verify_outputs:
+        first_line = output.splitlines()[0] if output.splitlines() else output
+        lines.append(_clip_line(first_line))
+    return lines
+
+
+def _extract_decisions_and_next_action(worker_message: str) -> tuple[list[str], list[str]]:
+    if not worker_message.strip():
+        return [], []
+    decisions = _extract_sectionish_lines(worker_message, ["decisions made", "decisions", "変更内容", "実施内容"])
+    next_action = _extract_sectionish_lines(worker_message, ["next action", "next steps", "次の作業", "次アクション"])
+    if not decisions:
+        decisions = [_clip_line(worker_message.strip().splitlines()[0])]
+    if not next_action:
+        next_action = ["Review last_message.txt for the worker's full final note."]
+    return decisions[:5], next_action[:5]
+
+
+def _extract_sectionish_lines(text: str, headings: list[str]) -> list[str]:
+    lines = text.splitlines()
+    values: list[str] = []
+    capture = False
+    for raw in lines:
+        stripped = raw.strip()
+        normalized = stripped.rstrip(":").strip("# ").lower()
+        if any(normalized == heading for heading in headings):
+            capture = True
+            continue
+        if capture and stripped.startswith("#"):
+            break
+        if capture and not stripped:
+            if values:
+                break
+            continue
+        if capture:
+            values.append(_clip_line(re.sub(r"^[-*]\s+", "", stripped)))
+    return values
+
+
+def _parse_json_line(line: str) -> dict | None:
     try:
-        proc = subprocess.run(
-            ["gemini", "-p", prompt, "--output-format", "text"],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        return False
-    if proc.returncode != 0 or "# Job Summary" not in proc.stdout:
-        return False
-    Path(summary_path).write_text(proc.stdout, encoding="utf-8")
-    return True
+        value = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _clip_line(text: str, limit: int = 240) -> str:
+    compact = " ".join(text.split())
+    return compact if len(compact) <= limit else compact[: limit - 15].rstrip() + " ...[truncated]"
 
 
 def _append_file(parts: list[str], title: str, path: str | Path) -> None:

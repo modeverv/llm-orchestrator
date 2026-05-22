@@ -24,7 +24,11 @@ def parse_verify_commands(acceptance_path: str | Path) -> list[str]:
         return commands
     for line in section.splitlines():
         line = line.strip()
-        if line and not line.startswith("#") and not line.startswith("-"):
+        if not line or line.startswith("#"):
+            continue
+        line = re.sub(r"^[-*]\s+", "", line)
+        line = re.sub(r"^\d+[.)]\s+", "", line)
+        if line:
             commands.append(line)
     return commands
 

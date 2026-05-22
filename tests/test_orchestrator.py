@@ -150,6 +150,55 @@ def test_run_job_with_fake_worker_succeeds(tmp_path, monkeypatch):
         assert metrics["n"] == 1
 
 
+def test_run_job_summary_includes_changed_files_commands_and_verification(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("rules", encoding="utf-8")
+    (tmp_path / "ACCEPTANCE.md").write_text(
+        "## Verify Commands\n\n- python -c \"print('verified')\"\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "owned.py").write_text("original", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    job_id = queue_job("p", task, tmp_path, ownership_paths=["owned.py"], db_path=db)
+    run_job(job_id, db_path=db, worker_impl=FakeWorker(message="Decisions Made:\n- edited owned file\nNext Action:\n- ship it", write_file="owned.py"))
+
+    summary = (orchestrator.ARTIFACTS_DIR / str(job_id) / "summary.md").read_text(encoding="utf-8")
+    assert "## Files Changed\n- owned.py" in summary
+    assert "## Verification\n- $ python -c \"print('verified')\"" in summary
+    assert "## Decisions Made\n- edited owned file" in summary
+    assert "## Next Action\n- ship it" in summary
+
+
+def test_token_limit_opens_gate_and_records_summary_blocker(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text("rules", encoding="utf-8")
+    job_id = queue_job("p", task, tmp_path, db_path=db)
+
+    run_job(job_id, db_path=db, worker_impl=FakeWorker(message="Reached maximum context length."))
+
+    with connect(db) as conn:
+        job = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        gate_row = conn.execute("SELECT reason FROM human_requests WHERE job_id = ?", (job_id,)).fetchone()
+    summary = (orchestrator.ARTIFACTS_DIR / str(job_id) / "summary.md").read_text(encoding="utf-8")
+    assert job["status"] == "waiting_human"
+    assert gate_row["reason"] == "token_limit_reached"
+    assert "## Blockers\n- token_limit_reached" in summary
+
+
 def test_run_job_clears_stale_artifacts(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
     db = tmp_path / "jobs.sqlite3"
@@ -362,3 +411,31 @@ def test_dot_ownership_allows_any_changed_path(tmp_path, monkeypatch):
     with connect(db) as conn:
         job = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
         assert job["status"] == "succeeded"
+
+
+def test_prune_artifacts_deletes_old_completed_jobs_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(orchestrator, "ARTIFACTS_DIR", tmp_path / "artifacts")
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    old_job = queue_job("old", task, tmp_path, db_path=db)
+    queued_job = queue_job("queued", task, tmp_path, db_path=db)
+    recent_job = queue_job("recent", task, tmp_path, db_path=db)
+    for job_id in (old_job, queued_job, recent_job):
+        artifact = orchestrator.ARTIFACTS_DIR / str(job_id)
+        artifact.mkdir(parents=True)
+        (artifact / "summary.md").write_text("summary", encoding="utf-8")
+    with connect(db) as conn:
+        conn.execute("UPDATE jobs SET status = 'succeeded', finished_at = datetime('now', '-10 days') WHERE id = ?", (old_job,))
+        conn.execute("UPDATE jobs SET status = 'queued', updated_at = datetime('now', '-10 days') WHERE id = ?", (queued_job,))
+        conn.execute("UPDATE jobs SET status = 'failed', finished_at = CURRENT_TIMESTAMP WHERE id = ?", (recent_job,))
+
+    dry_targets = orchestrator.prune_artifacts(keep_days=7, db_path=db, dry_run=True)
+    targets = orchestrator.prune_artifacts(keep_days=7, db_path=db)
+
+    assert dry_targets == [orchestrator.ARTIFACTS_DIR / str(old_job)]
+    assert targets == [orchestrator.ARTIFACTS_DIR / str(old_job)]
+    assert not (orchestrator.ARTIFACTS_DIR / str(old_job)).exists()
+    assert (orchestrator.ARTIFACTS_DIR / str(queued_job)).exists()
+    assert (orchestrator.ARTIFACTS_DIR / str(recent_job)).exists()

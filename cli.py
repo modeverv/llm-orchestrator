@@ -91,6 +91,12 @@ def main() -> int:
     propose.add_argument("template_id", type=int)
     propose.add_argument("--minimum-samples", type=int, default=3)
 
+    artifacts = sub.add_parser("artifacts")
+    artifacts_sub = artifacts.add_subparsers(dest="artifacts_command", required=True)
+    prune = artifacts_sub.add_parser("prune")
+    prune.add_argument("--keep-days", type=int, required=True)
+    prune.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args()
     db_path = Path(args.db)
     init_db(db_path)
@@ -145,6 +151,8 @@ def main() -> int:
         return 0
     if args.command == "template":
         return _template(args, db_path)
+    if args.command == "artifacts":
+        return _artifacts(args, db_path)
     return 1
 
 
@@ -249,6 +257,17 @@ def _template(args, db_path: Path) -> int:
             proposal = evaluator.propose_improvement(conn, args.template_id, args.minimum_samples)
             print("not enough samples" if proposal is None else f"draft {proposal}")
             return 0
+    return 1
+
+
+def _artifacts(args, db_path: Path) -> int:
+    if args.artifacts_command == "prune":
+        targets = orchestrator.prune_artifacts(args.keep_days, db_path=db_path, dry_run=args.dry_run)
+        for path in targets:
+            print(path)
+        if not targets:
+            print("no artifacts to prune")
+        return 0
     return 1
 
 

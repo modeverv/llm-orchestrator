@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import acceptance, evaluator, gate, lock, summarizer, verifier
@@ -16,7 +18,7 @@ from .workers.gemini import GeminiWorker
 
 
 ROOT = Path(__file__).resolve().parent.parent
-ARTIFACTS_DIR = ROOT / "artifacts"
+ARTIFACTS_DIR = Path(os.environ.get("FYWS_ARTIFACTS_DIR", ROOT / "artifacts")).expanduser()
 
 
 def compute_safe(c_score: float, o_score: float, i_score: float) -> float:
@@ -98,15 +100,10 @@ def queue_job(
 
 
 def dispatch_next(db_path: str | Path = DEFAULT_DB_PATH) -> int | None:
-    init_db(db_path)
-    with connect(db_path) as conn:
-        job = conn.execute(
-            "SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT 1"
-        ).fetchone()
-    if job is None:
-        return None
-    run_job(job["id"], db_path=db_path)
-    return int(job["id"])
+    from .runner import run_once
+
+    completed = run_once(db_path, max_workers=1)
+    return completed[0] if completed else None
 
 
 def run_job(
@@ -127,10 +124,13 @@ def run_job(
             return WorkerResult(False, "", "", error="lock conflict")
 
     start = time.monotonic()
-    artifact_dir = ARTIFACTS_DIR / str(job_id)
+    artifact_dir = artifacts_dir_for_db(db_path) / str(job_id)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     ownership_paths = json.loads(job["ownership_paths"])
     result = WorkerResult(False, "", str(artifact_dir / "events.jsonl"), error="not run")
+    ownership_baseline: set[str] = set()
+    files_changed: list[str] = []
+    verify_outputs: list[str] | None = None
     try:
         _clear_artifacts(artifact_dir)
         _prepare_artifacts(job, artifact_dir, db_path)
@@ -157,44 +157,56 @@ def run_job(
             resume=_should_resume(job),
             timeout_seconds=worker_timeout_seconds,
         )
+        files_changed = sorted(git_status_paths(job["cwd"]) - ownership_baseline)
+        if summarizer.token_limit_detected(result.last_message):
+            return _open_gate_and_summarize(
+                db_path,
+                job_id,
+                artifact_dir,
+                job,
+                result,
+                "Token limit reached. Continue in a new session with the generated summary/context?",
+                "token_limit_reached",
+                files_changed,
+                verify_outputs,
+            )
         if worker_requires_human(result.last_message):
-            with connect(db_path) as conn:
-                gate.open_gate(
-                    conn,
-                    job_id,
-                    "Worker explicitly requested human judgment. Review before continuing.",
-                    "worker_requested_human",
-                )
-                _event(conn, job_id, "error", "worker requested human judgment")
-            return result
+            return _open_gate_and_summarize(
+                db_path,
+                job_id,
+                artifact_dir,
+                job,
+                result,
+                "Worker explicitly requested human judgment. Review before continuing.",
+                "worker_requested_human",
+                files_changed,
+                verify_outputs,
+                event_message="worker requested human judgment",
+            )
         out_of_scope = ownership_check(job["cwd"], ownership_paths, baseline_paths=ownership_baseline)
         if out_of_scope:
             result.out_of_scope_files.extend(out_of_scope)
             _write_diff(job["cwd"], artifact_dir)
-            with connect(db_path) as conn:
-                gate.open_gate(
-                    conn,
-                    job_id,
-                    "Worker changed files outside ownership_paths. Review before continuing.",
-                    "out_of_scope_changes",
-                )
-                _event(conn, job_id, "error", "out-of-scope changes detected", {"files": out_of_scope})
-            return result
+            return _open_gate_and_summarize(
+                db_path,
+                job_id,
+                artifact_dir,
+                job,
+                result,
+                "Worker changed files outside ownership_paths. Review before continuing.",
+                "out_of_scope_changes",
+                files_changed,
+                verify_outputs,
+                event_message="out-of-scope changes detected",
+                event_payload={"files": out_of_scope},
+            )
 
         if result.success:
             acceptance_path = _find_acceptance_path(job)
             if acceptance_path:
                 verify_ok, verify_outputs = verifier.run_verify(acceptance_path, job["cwd"])
                 if not verify_ok:
-                    with connect(db_path) as conn:
-                        gate.open_gate(
-                            conn,
-                            job_id,
-                            "Verification commands failed.\n" + "\n---\n".join(verify_outputs[-2:]),
-                            "verify_failed",
-                        )
-                        _event(conn, job_id, "error", "verification failed", {"outputs": verify_outputs})
-                    return WorkerResult(
+                    failed_result = WorkerResult(
                         False,
                         result.last_message,
                         result.events_path,
@@ -203,21 +215,45 @@ def run_job(
                         step_count=result.step_count,
                         error="verification failed",
                     )
+                    return _open_gate_and_summarize(
+                        db_path,
+                        job_id,
+                        artifact_dir,
+                        job,
+                        failed_result,
+                        "Verification commands failed.\n" + "\n---\n".join(verify_outputs[-2:]),
+                        "verify_failed",
+                        files_changed,
+                        verify_outputs,
+                        event_message="verification failed",
+                        event_payload={"outputs": verify_outputs},
+                    )
 
         status = "succeeded" if result.success else "failed"
         if not result.success and _should_gate_after_failure(db_path, job_id):
-            with connect(db_path) as conn:
-                gate.open_gate(
-                    conn,
-                    job_id,
-                    "This job failed twice consecutively. Give guidance before retrying.",
-                    "two_consecutive_failures",
-                )
-                _event(conn, job_id, "error", result.error or "worker failed")
-            return result
+            return _open_gate_and_summarize(
+                db_path,
+                job_id,
+                artifact_dir,
+                job,
+                result,
+                "This job failed twice consecutively. Give guidance before retrying.",
+                "two_consecutive_failures",
+                files_changed,
+                verify_outputs,
+                event_message=result.error or "worker failed",
+            )
 
         duration = time.monotonic() - start
-        summarizer.summarize(artifact_dir, Path(job["prompt_path"]).read_text(encoding="utf-8"), job["cwd"], status, result.last_message)
+        summarizer.summarize(
+            artifact_dir,
+            Path(job["prompt_path"]).read_text(encoding="utf-8"),
+            job["cwd"],
+            status,
+            result.last_message,
+            files_changed=files_changed,
+            verify_outputs=verify_outputs,
+        )
         with connect(db_path) as conn:
             conn.execute(
                 """
@@ -370,7 +406,7 @@ def inspect_job(job_id: int, db_path: str | Path = DEFAULT_DB_PATH) -> str:
             (job_id,),
         ).fetchall()
 
-    artifact = ARTIFACTS_DIR / str(job_id)
+    artifact = artifacts_dir_for_db(db_path) / str(job_id)
     lines = [
         f"# Job {job_id}",
         "",
@@ -445,6 +481,49 @@ def dry_run_check(
     }
 
 
+def artifacts_dir_for_db(db_path: str | Path = DEFAULT_DB_PATH) -> Path:
+    if os.environ.get("FYWS_ARTIFACTS_DIR"):
+        return ARTIFACTS_DIR
+    resolved_db = Path(db_path).expanduser().resolve()
+    if resolved_db == Path(DEFAULT_DB_PATH).resolve():
+        return ARTIFACTS_DIR
+    return resolved_db.parent / "artifacts"
+
+
+def prune_artifacts(
+    keep_days: int,
+    db_path: str | Path = DEFAULT_DB_PATH,
+    dry_run: bool = False,
+    artifacts_dir: str | Path | None = None,
+) -> list[Path]:
+    if keep_days < 0:
+        raise ValueError("keep_days must be non-negative")
+    init_db(db_path)
+    artifact_root = Path(artifacts_dir) if artifacts_dir is not None else artifacts_dir_for_db(db_path)
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days)
+    except OverflowError:
+        cutoff = datetime.min.replace(tzinfo=timezone.utc)
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, COALESCE(finished_at, updated_at, created_at) AS completed_at
+            FROM jobs
+            WHERE status IN ('succeeded', 'failed')
+            """
+        ).fetchall()
+    targets: list[Path] = []
+    for row in rows:
+        completed_at = _parse_db_timestamp(row["completed_at"])
+        path = artifact_root / str(row["id"])
+        if completed_at <= cutoff and path.exists():
+            targets.append(path)
+    for path in targets:
+        if not dry_run:
+            shutil.rmtree(path)
+    return targets
+
+
 def _prepare_artifacts(job, artifact_dir: Path, db_path: str | Path) -> None:
     shutil.copyfile(job["prompt_path"], artifact_dir / "prompt.md")
     cwd = Path(job["cwd"])
@@ -489,6 +568,36 @@ def _event(conn, job_id: int, event_type: str, message: str, payload: dict | Non
     )
 
 
+def _open_gate_and_summarize(
+    db_path: str | Path,
+    job_id: int,
+    artifact_dir: Path,
+    job,
+    result: WorkerResult,
+    question: str,
+    reason: str,
+    files_changed: list[str],
+    verify_outputs: list[str] | None,
+    event_message: str | None = None,
+    event_payload: dict | None = None,
+) -> WorkerResult:
+    with connect(db_path) as conn:
+        gate.open_gate(conn, job_id, question, reason)
+        if event_message:
+            _event(conn, job_id, "error", event_message, event_payload)
+    summarizer.summarize(
+        artifact_dir,
+        Path(job["prompt_path"]).read_text(encoding="utf-8"),
+        job["cwd"],
+        "waiting_human",
+        result.last_message,
+        files_changed=files_changed,
+        verify_outputs=verify_outputs,
+        gate_reason=reason,
+    )
+    return result
+
+
 def _should_gate_after_failure(db_path: str | Path, job_id: int) -> bool:
     with connect(db_path) as conn:
         job = conn.execute("SELECT attempts FROM jobs WHERE id = ?", (job_id,)).fetchone()
@@ -519,8 +628,18 @@ def _previous_summary_path(job, db_path: str | Path) -> Path | None:
         ).fetchone()
     if previous is None:
         return None
-    path = ARTIFACTS_DIR / str(previous["id"]) / "summary.md"
+    path = artifacts_dir_for_db(db_path) / str(previous["id"]) / "summary.md"
     return path if path.exists() else None
+
+
+def _parse_db_timestamp(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        parsed = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def recover_stuck_jobs(db_path: str | Path = DEFAULT_DB_PATH) -> list[int]:

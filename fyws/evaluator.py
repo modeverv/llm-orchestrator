@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -9,7 +10,7 @@ from pathlib import Path
 from .workers.base import WorkerResult
 
 ROOT = Path(__file__).resolve().parent.parent
-ARTIFACTS_DIR = ROOT / "artifacts"
+ARTIFACTS_DIR = Path(os.environ.get("FYWS_ARTIFACTS_DIR", ROOT / "artifacts")).expanduser()
 ImprovementProposer = Callable[[str], str]
 
 
