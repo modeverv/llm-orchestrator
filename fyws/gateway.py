@@ -175,6 +175,7 @@ def list_projects(work_root: str | Path = DEFAULT_WORK_ROOT, db_path=None) -> li
             "succeeded": 0,
             "failed": 0,
             "waiting_human": 0,
+            "discarded": 0,
             "last_updated": None,
             "path": str(root / name) if name in dirs else None,
         }
@@ -195,7 +196,10 @@ def format_projects(projects: list[dict]) -> str:
             parts.append(f"queued={p['queued']}")
         if p.get("waiting_human"):
             parts.append(f"waiting={p['waiting_human']}")
-        parts.append(f"done={p.get('succeeded', 0)}✓ {p.get('failed', 0)}✗")
+        done = f"done={p.get('succeeded', 0)}✓ {p.get('failed', 0)}✗"
+        if p.get("discarded"):
+            done += f" {p['discarded']} discarded"
+        parts.append(done)
         if p.get("last_updated"):
             parts.append(f"updated={p['last_updated']}")
         lines.append("  ".join(parts))

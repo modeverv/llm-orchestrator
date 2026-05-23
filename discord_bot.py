@@ -13,7 +13,7 @@ def main() -> int:
     parser.add_argument(
         "message",
         nargs="?",
-        help="'<project>: <instruction>', '<worker> <project>: <instruction>', 'status', 'log <job-id>', 'gate', or 'answer <job-id> <text>'",
+        help="'<project>: <instruction>', '<worker> <project>: <instruction>', 'status', 'log <job-id>', 'gate', 'answer <job-id> <text>', or 'discard <job-id>'",
     )
     parser.add_argument("--work-root", default=os.environ.get("FYWS_WORK_ROOT", gateway.DEFAULT_WORK_ROOT))
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH))
@@ -91,6 +91,15 @@ def main() -> int:
     if message.startswith("log "):
         job_id = int(message.split(maxsplit=1)[1].lstrip("#"))
         print(orchestrator.job_log_text(job_id, args.db), end="")
+        return 0
+    if message.startswith("discard "):
+        job_id = int(message.split(maxsplit=1)[1].lstrip("#"))
+        try:
+            orchestrator.discard_job(job_id, args.db)
+        except ValueError as exc:
+            print(f"discard failed: {exc}")
+        else:
+            print(f"discarded #{job_id}")
         return 0
 
     queued = gateway.queue_from_message(message, args.work_root, db_path=args.db)
@@ -229,6 +238,13 @@ def handle_message(message: str, work_root: str, db_path: str) -> str:
     if text.startswith("log "):
         job_id = int(text.split(maxsplit=1)[1].lstrip("#"))
         return orchestrator.job_log_text(job_id, db_path)
+    if text.startswith("discard "):
+        job_id = int(text.split(maxsplit=1)[1].lstrip("#"))
+        try:
+            orchestrator.discard_job(job_id, db_path)
+        except ValueError as exc:
+            return f"discard failed: {exc}"
+        return f"discarded #{job_id}"
     if ":" in text:
         queued = gateway.queue_from_message(text, work_root, db_path=db_path)
         return gateway.format_queued(queued)

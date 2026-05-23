@@ -372,6 +372,44 @@ def retry_job(job_id: int, db_path: str | Path = DEFAULT_DB_PATH) -> int:
     return new_job_id
 
 
+def discard_job(
+    job_id: int,
+    db_path: str | Path = DEFAULT_DB_PATH,
+    reason: str = "discarded by user",
+    force: bool = False,
+) -> None:
+    init_db(db_path)
+    with connect(db_path) as conn:
+        job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise ValueError(f"job {job_id} not found")
+        if job["status"] == "running" and not force:
+            raise ValueError(f"job {job_id} is running; stop the worker first or use --force")
+        conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'discarded',
+                last_error = ?,
+                finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (reason, job_id),
+        )
+        conn.execute(
+            """
+            UPDATE human_requests
+            SET status = 'answered',
+                answer = COALESCE(answer, ?),
+                answered_at = COALESCE(answered_at, CURRENT_TIMESTAMP)
+            WHERE job_id = ? AND status = 'open'
+            """,
+            (reason, job_id),
+        )
+        _event(conn, job_id, "discarded", reason)
+        lock.release_lock(conn, job_id)
+
+
 def log_lines(job_id: int, db_path: str | Path = DEFAULT_DB_PATH) -> list[str]:
     path = artifacts_dir_for_db(db_path) / str(job_id) / "events.jsonl"
     if not path.exists():
@@ -829,6 +867,7 @@ def project_list(db_path: str | Path = DEFAULT_DB_PATH) -> list[dict]:
                    SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
                    SUM(CASE WHEN status = 'waiting_human' THEN 1 ELSE 0 END) AS waiting_human,
+                   SUM(CASE WHEN status = 'discarded' THEN 1 ELSE 0 END) AS discarded,
                    MAX(updated_at) AS last_updated
             FROM jobs
             GROUP BY project

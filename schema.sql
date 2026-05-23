@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS jobs (
             'running',
             'succeeded',
             'failed',
-            'waiting_human'
+            'waiting_human',
+            'discarded'
         )
     ),
     safe_score REAL NOT NULL,

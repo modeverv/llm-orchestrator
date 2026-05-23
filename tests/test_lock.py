@@ -56,3 +56,21 @@ def test_reap_stale_locks_removes_dead_owner_lock(tmp_path):
 
         assert reap_stale_locks(conn, max_age_seconds=1) == [job_id]
         assert not check_conflict(conn, "p", "/tmp/p", "write")
+
+
+def test_reap_stale_locks_removes_dead_owner_lock_even_when_recent(tmp_path):
+    db = tmp_path / "jobs.sqlite3"
+    init_db(db)
+    with connect(db) as conn:
+        job_id = _job(conn)
+        conn.execute("UPDATE jobs SET status = 'running' WHERE id = ?", (job_id,))
+        conn.execute(
+            """
+            INSERT INTO locks(project, cwd, mode, job_id, owner, acquired_at)
+            VALUES ('p', '/tmp/p', 'write', ?, ?, datetime('now'))
+            """,
+            (job_id, f"{os.uname().nodename}:999999"),
+        )
+
+        assert reap_stale_locks(conn, max_age_seconds=6 * 60 * 60) == [job_id]
+        assert not check_conflict(conn, "p", "/tmp/p", "write")

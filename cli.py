@@ -58,6 +58,10 @@ def main() -> int:
     inspect.add_argument("job_id", type=int)
     retry = sub.add_parser("retry")
     retry.add_argument("job_id", type=int)
+    discard = sub.add_parser("discard")
+    discard.add_argument("job_id", type=int)
+    discard.add_argument("--reason", default="discarded by user")
+    discard.add_argument("--force", action="store_true")
 
     worker = sub.add_parser("worker")
     worker.add_argument("job_id", type=int)
@@ -117,6 +121,10 @@ def main() -> int:
         return 0
     if args.command == "retry":
         print(orchestrator.retry_job(args.job_id, db_path=db_path))
+        return 0
+    if args.command == "discard":
+        orchestrator.discard_job(args.job_id, db_path=db_path, reason=args.reason, force=args.force)
+        print(f"discarded {args.job_id}")
         return 0
     if args.command == "worker":
         with connect(db_path) as conn:

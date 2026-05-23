@@ -69,8 +69,9 @@ def reap_stale_locks(
             if job_id is not None:
                 stale_job_ids.append(int(job_id))
             continue
+        owner_alive = _owner_is_alive(row["owner"])
         age = now - _sqlite_timestamp(row["acquired_at"])
-        if age >= max_age_seconds and not _owner_is_alive(row["owner"]):
+        if not owner_alive or age >= max_age_seconds:
             stale_lock_ids.append(int(row["id"]))
             if job_id is not None:
                 stale_job_ids.append(int(job_id))

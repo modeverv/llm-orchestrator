@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fyws.db import connect, init_db
 from fyws import orchestrator
-from fyws.orchestrator import compute_safe, dry_run_check, queue_job, run_job, worker_requires_human
+from fyws.orchestrator import compute_safe, discard_job, dry_run_check, queue_job, run_job, worker_requires_human
 from fyws.workers.base import WorkerResult
 
 
@@ -130,6 +130,57 @@ def test_queue_job_selects_active_project_template_then_default(tmp_path):
         }
     assert selected[p_job] == project_id
     assert selected[other_job] == default_id
+
+
+def test_discard_job_marks_discarded_and_removes_open_gate_and_lock(tmp_path):
+    db = tmp_path / "jobs.sqlite3"
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    job_id = queue_job("p", task, tmp_path, c_score=0.1, o_score=0.5, i_score=0.5, db_path=db)
+    with connect(db) as conn:
+        conn.execute(
+            """
+            INSERT INTO locks(project, cwd, mode, job_id, owner)
+            VALUES ('p', ?, 'write', ?, 'test:999999')
+            """,
+            (str(tmp_path.resolve()), job_id),
+        )
+
+    discard_job(job_id, db_path=db, reason="not needed")
+
+    with connect(db) as conn:
+        job = conn.execute("SELECT status, last_error, finished_at FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        gate_row = conn.execute("SELECT status, answer FROM human_requests WHERE job_id = ?", (job_id,)).fetchone()
+        lock_count = conn.execute("SELECT COUNT(*) AS n FROM locks WHERE job_id = ?", (job_id,)).fetchone()
+        event = conn.execute("SELECT event_type FROM job_events WHERE job_id = ? ORDER BY id DESC LIMIT 1", (job_id,)).fetchone()
+    assert job["status"] == "discarded"
+    assert job["last_error"] == "not needed"
+    assert job["finished_at"] is not None
+    assert gate_row["status"] == "answered"
+    assert gate_row["answer"] == "not needed"
+    assert lock_count["n"] == 0
+    assert event["event_type"] == "discarded"
+
+
+def test_discard_running_job_requires_force(tmp_path):
+    db = tmp_path / "jobs.sqlite3"
+    task = tmp_path / "task.md"
+    task.write_text("do it", encoding="utf-8")
+    job_id = queue_job("p", task, tmp_path, db_path=db)
+    with connect(db) as conn:
+        conn.execute("UPDATE jobs SET status = 'running' WHERE id = ?", (job_id,))
+
+    try:
+        discard_job(job_id, db_path=db)
+    except ValueError as exc:
+        assert "is running" in str(exc)
+    else:
+        raise AssertionError("discard_job should require force for running jobs")
+
+    discard_job(job_id, db_path=db, force=True)
+    with connect(db) as conn:
+        job = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    assert job["status"] == "discarded"
 
 
 def test_run_job_with_fake_worker_succeeds(tmp_path, monkeypatch):

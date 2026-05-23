@@ -12,7 +12,7 @@ from .base import WorkerResult
 
 
 class GeminiWorker:
-    def __init__(self, executable: str = "gemini", model: str = "gemini-2.5-pro") -> None:
+    def __init__(self, executable: str = "gemini", model: str = "gemini-3.1-pro-preview") -> None:
         self.executable = executable
         self.model = model
 

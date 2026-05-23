@@ -1,4 +1,4 @@
-# AGENTS.md — FYWS
+# Agents.md — FYWS
 
 > Finish Your Work, Stability, and Go Home Quickly
 

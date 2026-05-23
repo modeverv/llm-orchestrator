@@ -31,6 +31,7 @@ python cli.py dispatch --max-workers 2 --worker-timeout 3600 --auto-continue-tok
 python cli.py status
 python cli.py log 1
 python cli.py inspect 1
+python cli.py discard 1 --reason "no longer needed"
 python cli.py project list
 ```
 
@@ -98,6 +99,7 @@ Messages sent in the configured channel are processed as commands:
 | `gate` | List jobs waiting for human input |
 | `answer <job-id> <text>` | Answer a human gate and requeue the job |
 | `log <job-id>` | Show `summary.md`, falling back to `events.jsonl` or `last_message.txt` |
+| `discard <job-id>` | Mark a queued, failed, or waiting job as `discarded` and release its lock |
 
 Examples:
 
@@ -106,6 +108,7 @@ myproject: fizzbuzzを実装してください
 claude myproject: unit testも追加して
 answer 3 approved
 log 3
+discard 4
 ```
 
 Projects must exist under the work root (`~/work/001_work/by-llms` by default) before sending a message.
@@ -176,6 +179,7 @@ Minimal launchd plist:
 - `python discord_bot.py --serve --run-jobs` runs a live Discord gateway when `discord.py` is installed and `DISCORD_TOKEN` is set.
 - Jobs stuck in `running` state from a previous crash are automatically requeued when `dispatch --forever` starts.
 - Long-running dispatch can reap stale locks and stop hung workers with `--stale-lock-seconds` and `--worker-timeout`.
+- Jobs that are no longer needed can be removed from the active queue with `python cli.py discard <id>` or Discord `discard <id>`. Running jobs require CLI `--force` after stopping or confirming the worker should be abandoned.
 - `--auto-continue-token-limit` (on `dispatch` and `discord_bot.py --run-jobs`) creates a continuation job automatically when a worker hits a token limit instead of opening a human gate. Without this flag the continuation job stays in `waiting_human` until manually approved.
 - Gemini resume is limited to the same job after a recorded Gemini session; separate jobs always use a fresh CLI session plus `context.md`.
 
@@ -189,5 +193,6 @@ Minimal launchd plist:
 | Worker changes files outside `ownership_paths` | Job enters `waiting_human` with reason `out_of_scope_changes` | Review `diff.patch` in the artifact directory, then `gate answer <id>` to approve or `retry <id>` with tighter `ownership_paths` |
 | Verification commands fail after job succeeds | Job enters `waiting_human` with reason `verify_failed` | Fix the issue in the repo, then `gate answer <id>` to requeue |
 | Same job fails twice | Job enters `waiting_human` with reason `two_consecutive_failures` | Inspect the failure with `inspect <id>`, adjust the prompt or worker, then `gate answer <id>` |
+| Queued or waiting job is obsolete | Job remains visible but should not run | Run `python cli.py discard <id>` or send `discard <id>` in Discord |
 | Discord polling hits rate limit | Bot becomes slow or drops messages | Enable Message Content Intent in the Discord developer portal and pass `--message-content-intent` to avoid polling |
 | `artifacts/` grows large over time | Disk usage climbs | Run `python cli.py artifacts prune --keep-days 30` periodically (add `--dry-run` to preview) |

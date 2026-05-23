@@ -37,6 +37,14 @@ def run_once(
         stale_job_ids = reap_stale_locks(conn, stale_lock_seconds)
         for job_id in stale_job_ids:
             conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'queued', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'running'
+                """,
+                (job_id,),
+            )
+            conn.execute(
                 "INSERT INTO job_events(job_id, event_type, message, payload) VALUES (?, 'lock_reaped', ?, '{}')",
                 (job_id, "stale lock reaped by runner"),
             )
